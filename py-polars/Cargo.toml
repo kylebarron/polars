@@ -42,7 +42,7 @@ ipc = ["polars/ipc"]
 is_in = ["polars/is_in"]
 json = ["polars/serde", "serde_json"]
 
-default = ["json", "parquet", "ipc", "avro", "is_in", "json", "polars/repeat_by"]
+default = ["json", "ipc", "avro", "is_in", "json", "polars/repeat_by"] # parquet
 
 [dependencies.polars]
 path = "../polars"
@@ -57,7 +57,7 @@ features = [
   "random",
   "object",
   "csv-file",
-  "fmt",
+  # "fmt",
   "performant",
   "dtype-full",
   "rows",
@@ -70,9 +70,9 @@ features = [
   "concat_str",
   "row_hash",
   "reinterpret",
-  "decompress-fast",
+  # "decompress-fast",
   "mode",
-  "extract_jsonpath",
+  # "extract_jsonpath",
   "lazy_regex",
   "cum_agg",
   "rolling_window",
@@ -106,6 +106,15 @@ features = [
   "to_dummies",
   "string_justify",
 ]
+
+[patch.crates-io]
+# This is required until chrono releases 0.4.20, which should happen "soon":
+# https://github.com/chronotope/chrono/issues/674
+# Any git revision after the fix in https://github.com/chronotope/chrono/pull/593 but before the
+# version change in
+# https://github.com/chronotope/chrono/commit/3ea7149bc76ef90687ee39c6a55a6844c7844b54 should work.
+# The following revision is the parent of the version change commit.
+chrono = { git = 'https://github.com/chronotope/chrono', rev = "b1d74aef688c27fccc738c64746535905903471a"}
 
 # [patch.crates-io]
 # packed_simd_2 = { git = "https://github.com/rust-lang/packed_simd" }
