@@ -1,6 +1,17 @@
+#[cfg(feature = "arg_where")]
+mod arg_where;
+mod fill_null;
 #[cfg(feature = "is_in")]
 mod is_in;
 mod pow;
+#[cfg(feature = "row_hash")]
+mod row_hash;
+#[cfg(feature = "strings")]
+mod strings;
+#[cfg(any(feature = "temporal", feature = "date_offset"))]
+mod temporal;
+#[cfg(feature = "trigonometry")]
+mod trigonometry;
 
 use super::*;
 use polars_core::prelude::*;
@@ -8,14 +19,50 @@ use polars_core::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Eq, Hash)]
 pub enum FunctionExpr {
     NullCount,
     Pow,
     #[cfg(feature = "row_hash")]
-    Hash(usize),
+    Hash(u64, u64, u64, u64),
     #[cfg(feature = "is_in")]
     IsIn,
+    #[cfg(feature = "arg_where")]
+    ArgWhere,
+    #[cfg(feature = "strings")]
+    StringContains {
+        pat: String,
+        literal: bool,
+    },
+    #[cfg(feature = "strings")]
+    StringStartsWith(String),
+    #[cfg(feature = "strings")]
+    StringEndsWith(String),
+    #[cfg(feature = "date_offset")]
+    DateOffset(Duration),
+    #[cfg(feature = "trigonometry")]
+    Trigonometry(TrigonometricFunction),
+    FillNull {
+        super_type: DataType,
+    },
+}
+
+#[cfg(feature = "trigonometry")]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash)]
+pub enum TrigonometricFunction {
+    Sin,
+    Cos,
+    Tan,
+    ArcSin,
+    ArcCos,
+    ArcTan,
+    Sinh,
+    Cosh,
+    Tanh,
+    ArcSinh,
+    ArcCosh,
+    ArcTanh,
 }
 
 impl FunctionExpr {
@@ -38,25 +85,75 @@ impl FunctionExpr {
             })
         };
 
+        let same_type = || map_dtype(&|dtype| dtype.clone());
+
         use FunctionExpr::*;
         match self {
             NullCount => with_dtype(IDX_DTYPE),
             Pow => float_dtype(),
             #[cfg(feature = "row_hash")]
-            Hash(_) => with_dtype(DataType::UInt64),
+            Hash(..) => with_dtype(DataType::UInt64),
             #[cfg(feature = "is_in")]
             IsIn => with_dtype(DataType::Boolean),
+            #[cfg(feature = "arg_where")]
+            ArgWhere => with_dtype(IDX_DTYPE),
+            #[cfg(feature = "strings")]
+            StringContains { .. } | StringEndsWith(_) | StringStartsWith(_) => {
+                with_dtype(DataType::Boolean)
+            }
+            #[cfg(feature = "date_offset")]
+            DateOffset(_) => same_type(),
+            #[cfg(feature = "trigonometry")]
+            Trigonometry(_) => float_dtype(),
+            FillNull { super_type, .. } => with_dtype(super_type.clone()),
         }
     }
 }
 
 macro_rules! wrap {
     ($e:expr) => {
-        NoEq::new(Arc::new($e))
+        SpecialEq::new(Arc::new($e))
     };
 }
 
-impl From<FunctionExpr> for NoEq<Arc<dyn SeriesUdf>> {
+// Fn(&[Series], args)
+// all expression arguments are in the slice.
+// the first element is the root expression.
+macro_rules! map_as_slice {
+    ($func:path, $($args:expr),*) => {{
+        let f = move |s: &mut [Series]| {
+            $func(s, $($args),*)
+        };
+
+        SpecialEq::new(Arc::new(f))
+    }};
+}
+
+// Fn(&Series, args)
+macro_rules! map_with_args {
+    ($func:path, $($args:expr),*) => {{
+        let f = move |s: &mut [Series]| {
+            let s = &s[0];
+            $func(s, $($args),*)
+        };
+
+        SpecialEq::new(Arc::new(f))
+    }};
+}
+
+// FnOnce(Series, args)
+macro_rules! map_owned_with_args {
+    ($func:path, $($args:expr),*) => {{
+        let f = move |s: &mut [Series]| {
+            let s = std::mem::take(&mut s[0]);
+            $func(s, $($args),*)
+        };
+
+        SpecialEq::new(Arc::new(f))
+    }};
+}
+
+impl From<FunctionExpr> for SpecialEq<Arc<dyn SeriesUdf>> {
     fn from(func: FunctionExpr) -> Self {
         use FunctionExpr::*;
         match func {
@@ -71,16 +168,39 @@ impl From<FunctionExpr> for NoEq<Arc<dyn SeriesUdf>> {
                 wrap!(pow::pow)
             }
             #[cfg(feature = "row_hash")]
-            Hash(seed) => {
-                let f = move |s: &mut [Series]| {
-                    let s = &s[0];
-                    Ok(s.hash(ahash::RandomState::with_seed(seed)).into_series())
-                };
-                wrap!(f)
+            Hash(k0, k1, k2, k3) => {
+                map_with_args!(row_hash::row_hash, k0, k1, k2, k3)
             }
             #[cfg(feature = "is_in")]
             IsIn => {
                 wrap!(is_in::is_in)
+            }
+            #[cfg(feature = "arg_where")]
+            ArgWhere => {
+                wrap!(arg_where::arg_where)
+            }
+            #[cfg(feature = "strings")]
+            StringContains { pat, literal } => {
+                map_with_args!(strings::contains, &pat, literal)
+            }
+            #[cfg(feature = "strings")]
+            StringEndsWith(sub) => {
+                map_with_args!(strings::ends_with, &sub)
+            }
+            #[cfg(feature = "strings")]
+            StringStartsWith(sub) => {
+                map_with_args!(strings::starts_with, &sub)
+            }
+            #[cfg(feature = "date_offset")]
+            DateOffset(offset) => {
+                map_owned_with_args!(temporal::date_offset, offset)
+            }
+            #[cfg(feature = "trigonometry")]
+            Trigonometry(trig_function) => {
+                map_with_args!(trigonometry::apply_trigonometric_function, trig_function)
+            }
+            FillNull { super_type } => {
+                map_as_slice!(fill_null::fill_null, &super_type)
             }
         }
     }

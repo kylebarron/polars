@@ -91,7 +91,7 @@ pub(crate) mod private {
             panic!("operation cummin not supported for this dtype")
         }
 
-        fn _set_sorted(&mut self, _reverse: bool) {
+        fn _set_sorted(&mut self, _is_sorted: IsSorted) {
             invalid_operation_panic!(self)
         }
 
@@ -457,13 +457,6 @@ pub trait SeriesTrait:
         None
     }
 
-    /// Get indexes that evaluate true
-    fn arg_true(&self) -> Result<IdxCa> {
-        Err(PolarsError::InvalidOperation(
-            "arg_true can only be called for boolean dtype".into(),
-        ))
-    }
-
     /// Get a mask of the null values.
     fn is_null(&self) -> BooleanChunked {
         invalid_operation_panic!(self)
@@ -629,13 +622,6 @@ pub trait SeriesTrait:
     /// Only implemented for ObjectType
     fn as_any_mut(&mut self) -> &mut dyn Any {
         invalid_operation_panic!(self)
-    }
-
-    /// Raise a numeric series to the power of exponent.
-    fn pow(&self, _exponent: f64) -> Result<Series> {
-        Err(PolarsError::InvalidOperation(
-            format!("power operation not supported on dtype {:?}", self.dtype()).into(),
-        ))
     }
 
     /// Get a boolean mask of the local maximum peaks.

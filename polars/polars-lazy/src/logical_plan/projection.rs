@@ -7,12 +7,12 @@ use polars_arrow::index::IndexToUsize;
 /// expression chain.
 pub(super) fn replace_wildcard_with_column(mut expr: Expr, column_name: Arc<str>) -> Expr {
     expr.mutate().apply(|e| {
-        match &e {
+        match e {
             Expr::Wildcard => {
                 *e = Expr::Column(column_name.clone());
             }
             Expr::Exclude(input, _) => {
-                *e = replace_wildcard_with_column(*input.clone(), column_name.clone());
+                *e = replace_wildcard_with_column(std::mem::take(input), column_name.clone());
             }
             _ => {}
         }
@@ -91,9 +91,9 @@ fn expand_regex(expr: &Expr, result: &mut Vec<Expr>, schema: &Schema, pattern: &
             let mut new_expr = expr.clone();
 
             new_expr.mutate().apply(|e| match &e {
-                Expr::Column(_) => {
+                Expr::Column(pat) if pat.as_ref() == pattern => {
                     *e = Expr::Column(Arc::from(name.as_str()));
-                    false
+                    true
                 }
                 _ => true,
             });
@@ -109,17 +109,24 @@ fn expand_regex(expr: &Expr, result: &mut Vec<Expr>, schema: &Schema, pattern: &
 /// that are selected by that regex in `result`. The regex should start with `^` and end with `$`.
 fn replace_regex(expr: &Expr, result: &mut Vec<Expr>, schema: &Schema) {
     let roots = expr_to_root_column_names(expr);
-    // only in simple expression (no binary expression)
-    // we pattern match regex columns
-    if roots.len() == 1 {
-        let name = &*roots[0];
+    let mut regex = None;
+    for name in &roots {
         if name.starts_with('^') && name.ends_with('$') {
-            expand_regex(expr, result, schema, name)
-        } else {
-            let expr = rewrite_special_aliases(expr.clone());
-            result.push(expr)
+            match regex {
+                None => {
+                    regex = Some(name);
+                    expand_regex(expr, result, schema, name)
+                }
+                Some(r) => {
+                    assert_eq!(
+                        r, name,
+                        "an expression is not allowed to have different regexes"
+                    )
+                }
+            }
         }
-    } else {
+    }
+    if regex.is_none() {
         let expr = rewrite_special_aliases(expr.clone());
         result.push(expr)
     }
@@ -142,21 +149,44 @@ fn expand_columns(expr: &Expr, result: &mut Vec<Expr>, names: &[String]) {
     }
 }
 
+/// This replaces the dtypes Expr with a Column Expr. It also removes the Exclude Expr from the
+/// expression chain.
+pub(super) fn replace_dtype_with_column(mut expr: Expr, column_name: Arc<str>) -> Expr {
+    expr.mutate().apply(|e| {
+        match e {
+            Expr::DtypeColumn(_) => {
+                *e = Expr::Column(column_name.clone());
+            }
+            Expr::Exclude(input, _) => {
+                *e = replace_dtype_with_column(std::mem::take(input), column_name.clone());
+            }
+            _ => {}
+        }
+        // always keep iterating all inputs
+        true
+    });
+    expr
+}
+
 /// replace `DtypeColumn` with `col("foo")..col("bar")`
-fn expand_dtypes(expr: &Expr, result: &mut Vec<Expr>, schema: &Schema, dtypes: &[DataType]) {
+fn expand_dtypes(
+    expr: &Expr,
+    result: &mut Vec<Expr>,
+    schema: &Schema,
+    dtypes: &[DataType],
+    exclude: &[Arc<str>],
+) {
     for dtype in dtypes {
         for field in schema.iter_fields().filter(|f| f.data_type() == dtype) {
             let name = field.name();
 
-            let mut new_expr = expr.clone();
-            new_expr.mutate().apply(|e| {
-                if let Expr::DtypeColumn(_) = &e {
-                    *e = Expr::Column(Arc::from(name.as_str()));
-                }
-                // always keep iterating all inputs
-                true
-            });
+            // skip excluded names
+            if exclude.iter().any(|excl| excl.as_ref() == name.as_str()) {
+                continue;
+            }
 
+            let new_expr = expr.clone();
+            let new_expr = replace_dtype_with_column(new_expr, Arc::from(name.as_str()));
             let new_expr = rewrite_special_aliases(new_expr);
             result.push(new_expr)
         }
@@ -348,7 +378,9 @@ pub(crate) fn rewrite_projections(exprs: Vec<Expr>, schema: &Schema, keys: &[Exp
             if let Expr::Columns(names) = e {
                 expand_columns(&expr, &mut result, names)
             } else if let Expr::DtypeColumn(dtypes) = e {
-                expand_dtypes(&expr, &mut result, schema, dtypes)
+                // keep track of column excluded from the dtypes
+                let exclude = prepare_excluded(&expr, schema, keys);
+                expand_dtypes(&expr, &mut result, schema, dtypes, &exclude)
             }
             continue;
         }

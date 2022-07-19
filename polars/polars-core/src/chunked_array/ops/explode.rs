@@ -1,3 +1,4 @@
+use crate::chunked_array::builder::AnonymousOwnedListBuilder;
 use crate::prelude::*;
 use arrow::bitmap::Bitmap;
 use arrow::{array::*, bitmap::MutableBitmap, buffer::Buffer};
@@ -50,7 +51,7 @@ where
 
         // in the case that the value array has got null values, we need to check every validity
         // value and collect the indices.
-        // because the length of the array is not known, we first collect the null indexes, offsetted
+        // because the length of the array is not known, we first collect the null indexes, offset
         // with the insertion of empty rows (as None) and later create a validity bitmap
         if arr.has_validity() {
             let validity_values = arr.validity().unwrap();
@@ -141,9 +142,13 @@ impl ExplodeByOffsets for BooleanChunked {
             if o == last {
                 if start != last {
                     let vals = arr.slice(start, last - start);
-                    let vals_ref = vals.as_any().downcast_ref::<BooleanArray>().unwrap();
-                    for val in vals_ref {
-                        builder.append_option(val)
+
+                    if vals.null_count() == 0 {
+                        builder
+                            .array_builder
+                            .extend_trusted_len_values(vals.values_iter())
+                    } else {
+                        builder.array_builder.extend_trusted_len(vals.into_iter());
                     }
                 }
                 builder.append_null();
@@ -152,16 +157,48 @@ impl ExplodeByOffsets for BooleanChunked {
             last = o;
         }
         let vals = arr.slice(start, last - start);
-        let vals_ref = vals.as_any().downcast_ref::<BooleanArray>().unwrap();
-        for val in vals_ref {
-            builder.append_option(val)
+        if vals.null_count() == 0 {
+            builder
+                .array_builder
+                .extend_trusted_len_values(vals.values_iter())
+        } else {
+            builder.array_builder.extend_trusted_len(vals.into_iter());
         }
         builder.finish().into()
     }
 }
 impl ExplodeByOffsets for ListChunked {
-    fn explode_by_offsets(&self, _offsets: &[i64]) -> Series {
-        panic!("cannot explode List of Lists")
+    fn explode_by_offsets(&self, offsets: &[i64]) -> Series {
+        debug_assert_eq!(self.chunks.len(), 1);
+        let arr = self.downcast_iter().next().unwrap();
+
+        let cap = ((arr.len() as f32) * 1.5) as usize;
+        let inner_type = self.inner_dtype();
+        let mut builder = AnonymousOwnedListBuilder::new(self.name(), cap, Some(inner_type));
+
+        let mut start = offsets[0] as usize;
+        let mut last = start;
+        for &o in &offsets[1..] {
+            let o = o as usize;
+            if o == last {
+                if start != last {
+                    let vals = arr.slice(start, last - start);
+                    let ca = ListChunked::from_chunks("", vec![Box::new(vals)]);
+                    for s in &ca {
+                        builder.append_opt_series(s.as_ref())
+                    }
+                }
+                builder.append_null();
+                start = o;
+            }
+            last = o;
+        }
+        let vals = arr.slice(start, last - start);
+        let ca = ListChunked::from_chunks("", vec![Box::new(vals)]);
+        for s in &ca {
+            builder.append_opt_series(s.as_ref())
+        }
+        builder.finish().into()
     }
 }
 impl ExplodeByOffsets for Utf8Chunked {
@@ -180,9 +217,12 @@ impl ExplodeByOffsets for Utf8Chunked {
             if o == last {
                 if start != last {
                     let vals = arr.slice(start, last - start);
-                    let vals_ref = vals.as_any().downcast_ref::<LargeStringArray>().unwrap();
-                    for val in vals_ref {
-                        builder.append_option(val)
+                    if vals.null_count() == 0 {
+                        builder
+                            .builder
+                            .extend_trusted_len_values(vals.values_iter())
+                    } else {
+                        builder.builder.extend_trusted_len(vals.into_iter());
                     }
                 }
                 builder.append_null();
@@ -191,9 +231,12 @@ impl ExplodeByOffsets for Utf8Chunked {
             last = o;
         }
         let vals = arr.slice(start, last - start);
-        let vals_ref = vals.as_any().downcast_ref::<LargeStringArray>().unwrap();
-        for val in vals_ref {
-            builder.append_option(val)
+        if vals.null_count() == 0 {
+            builder
+                .builder
+                .extend_trusted_len_values(vals.values_iter())
+        } else {
+            builder.builder.extend_trusted_len(vals.into_iter());
         }
         builder.finish().into()
     }
@@ -208,6 +251,7 @@ pub(crate) fn offsets_to_indexes(offsets: &[i64], capacity: usize) -> Vec<IdxSiz
 
     let mut count = 0;
     let mut last_idx = 0;
+    let mut previous_empty = false;
     for offset in &offsets[1..] {
         while count < *offset {
             count += 1;
@@ -217,13 +261,20 @@ pub(crate) fn offsets_to_indexes(offsets: &[i64], capacity: usize) -> Vec<IdxSiz
         // we started iterating from 1, so there is always a previous offset
         // we take the pointer to the previous element and deref that to get
         // the previous offset
-        unsafe {
-            let previous_offset = *(offset as *const i64).offset(-1);
-            if previous_offset != *offset {
-                last_idx += 1;
-            }
+        let previous_offset = unsafe { *(offset as *const i64).offset(-1) };
+
+        if !previous_empty && (previous_offset != *offset) {
+            last_idx += 1;
+        } else {
+            count += 1;
+            idx.push(last_idx);
+            last_idx += 1;
         }
+        previous_empty = previous_offset == *offset;
     }
+    // undo latest increment
+    last_idx -= 1;
+
     for _ in 0..(capacity - count as usize) {
         idx.push(last_idx);
     }
@@ -290,7 +341,12 @@ impl ChunkExplode for ListChunked {
             #[cfg(feature = "dtype-categorical")]
             DataType::Categorical(rev_map) => {
                 let cats = s.u32().unwrap().clone();
-                s = CategoricalChunked::from_cats_and_rev_map(cats, rev_map.unwrap()).into_series();
+                // safety:
+                // rev_map is from same array, so we are still in bounds
+                s = unsafe {
+                    CategoricalChunked::from_cats_and_rev_map_unchecked(cats, rev_map.unwrap())
+                        .into_series()
+                };
             }
             #[cfg(feature = "dtype-date")]
             DataType::Date => s = s.into_date(),

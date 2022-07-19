@@ -1,22 +1,15 @@
+from __future__ import annotations
+
 import copy
-from datetime import date, datetime, timedelta
-from typing import Any, Callable, List, Optional, Sequence, Tuple, Type, Union
-
-import numpy as np
-
-from polars.utils import _timedelta_to_pl_duration
-
-try:
-    from polars.polars import PyExpr
-
-    _DOCUMENTING = False
-except ImportError:  # pragma: no cover
-    _DOCUMENTING = True
-
 import math
+import random
+from datetime import date, datetime, timedelta
+from typing import Any, Callable, List, Sequence
 
 from polars import internals as pli
 from polars.datatypes import (
+    DTYPE_TEMPORAL_UNITS,
+    Boolean,
     DataType,
     Date,
     Datetime,
@@ -27,18 +20,33 @@ from polars.datatypes import (
     UInt32,
     py_type_to_dtype,
 )
+from polars.utils import _timedelta_to_pl_duration
+
+try:
+    from polars.polars import PyExpr
+
+    _DOCUMENTING = False
+except ImportError:
+    _DOCUMENTING = True
+
+try:
+    import numpy as np
+
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
 
 
 def selection_to_pyexpr_list(
-    exprs: Union[str, "Expr", Sequence[Union[str, "Expr", "pli.Series"]], "pli.Series"]
-) -> List["PyExpr"]:
+    exprs: str | Expr | Sequence[str | Expr | pli.Series] | pli.Series,
+) -> List[PyExpr]:
     if isinstance(exprs, (str, Expr, pli.Series)):
         exprs = [exprs]
 
     return [expr_to_lit_or_expr(e, str_to_lit=False)._pyexpr for e in exprs]
 
 
-def wrap_expr(pyexpr: "PyExpr") -> "Expr":
+def wrap_expr(pyexpr: PyExpr) -> Expr:
     return Expr._from_pyexpr(pyexpr)
 
 
@@ -57,132 +65,137 @@ class Expr:
         return self._pyexpr.to_str()
 
     @staticmethod
-    def _from_pyexpr(pyexpr: "PyExpr") -> "Expr":
+    def _from_pyexpr(pyexpr: PyExpr) -> Expr:
         self = Expr.__new__(Expr)
         self._pyexpr = pyexpr
         return self
 
-    def __to_pyexpr(self, other: Any) -> "PyExpr":
+    def __to_pyexpr(self, other: Any) -> PyExpr:
         return self.__to_expr(other)._pyexpr
 
-    def __to_expr(self, other: Any) -> "Expr":
+    def __to_expr(self, other: Any) -> Expr:
         if isinstance(other, Expr):
             return other
         return pli.lit(other)
 
-    def __bool__(self) -> "Expr":
+    def __bool__(self) -> Expr:
         raise ValueError(
-            "Since Expr are lazy, the truthiness of an Expr is ambiguous. \
-            Hint: use '&' or '|' to chain Expr together, not and/or."
+            "Since Expr are lazy, the truthiness of an Expr is ambiguous. "
+            "Hint: use '&' or '|' to chain Expr together, not and/or."
         )
 
-    def __invert__(self) -> "Expr":
+    def __invert__(self) -> Expr:
         return self.is_not()
 
-    def __xor__(self, other: "Expr") -> "Expr":
+    def __xor__(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr._xor(self.__to_pyexpr(other)))
 
-    def __rxor__(self, other: "Expr") -> "Expr":
+    def __rxor__(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr._xor(self.__to_pyexpr(other)))
 
-    def __and__(self, other: "Expr") -> "Expr":
+    def __and__(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr._and(self.__to_pyexpr(other)))
 
-    def __rand__(self, other: Any) -> "Expr":
+    def __rand__(self, other: Any) -> Expr:
         return wrap_expr(self._pyexpr._and(self.__to_pyexpr(other)))
 
-    def __or__(self, other: "Expr") -> "Expr":
+    def __or__(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr._or(self.__to_pyexpr(other)))
 
-    def __ror__(self, other: Any) -> "Expr":
+    def __ror__(self, other: Any) -> Expr:
         return wrap_expr(self.__to_pyexpr(other)._or(self._pyexpr))
 
-    def __add__(self, other: Any) -> "Expr":
+    def __add__(self, other: Any) -> Expr:
         return wrap_expr(self._pyexpr + self.__to_pyexpr(other))
 
-    def __radd__(self, other: Any) -> "Expr":
+    def __radd__(self, other: Any) -> Expr:
         return wrap_expr(self.__to_pyexpr(other) + self._pyexpr)
 
-    def __sub__(self, other: Any) -> "Expr":
+    def __sub__(self, other: Any) -> Expr:
         return wrap_expr(self._pyexpr - self.__to_pyexpr(other))
 
-    def __rsub__(self, other: Any) -> "Expr":
+    def __rsub__(self, other: Any) -> Expr:
         return wrap_expr(self.__to_pyexpr(other) - self._pyexpr)
 
-    def __mul__(self, other: Any) -> "Expr":
+    def __mul__(self, other: Any) -> Expr:
         return wrap_expr(self._pyexpr * self.__to_pyexpr(other))
 
-    def __rmul__(self, other: Any) -> "Expr":
+    def __rmul__(self, other: Any) -> Expr:
         return wrap_expr(self.__to_pyexpr(other) * self._pyexpr)
 
-    def __truediv__(self, other: Any) -> "Expr":
+    def __truediv__(self, other: Any) -> Expr:
         return wrap_expr(self._pyexpr / self.__to_pyexpr(other))
 
-    def __rtruediv__(self, other: Any) -> "Expr":
+    def __rtruediv__(self, other: Any) -> Expr:
         return wrap_expr(self.__to_pyexpr(other) / self._pyexpr)
 
-    def __floordiv__(self, other: Any) -> "Expr":
+    def __floordiv__(self, other: Any) -> Expr:
         return wrap_expr(self._pyexpr // self.__to_pyexpr(other))
 
-    def __rfloordiv__(self, other: Any) -> "Expr":
+    def __rfloordiv__(self, other: Any) -> Expr:
         return wrap_expr(self.__to_pyexpr(other) // self._pyexpr)
 
-    def __mod__(self, other: Any) -> "Expr":
+    def __mod__(self, other: Any) -> Expr:
         return wrap_expr(self._pyexpr % self.__to_pyexpr(other))
 
-    def __rmod__(self, other: Any) -> "Expr":
+    def __rmod__(self, other: Any) -> Expr:
         return wrap_expr(self.__to_pyexpr(other) % self._pyexpr)
 
-    def __pow__(self, power: Union[float, "Expr"], modulo: None = None) -> "Expr":
+    def __pow__(self, power: int | float | pli.Series | Expr) -> Expr:
         return self.pow(power)
 
-    def __ge__(self, other: Any) -> "Expr":
+    def __rpow__(self, base: int | float | Expr) -> Expr:
+        return pli.expr_to_lit_or_expr(base) ** self
+
+    def __ge__(self, other: Any) -> Expr:
         return self.gt_eq(self.__to_expr(other))
 
-    def __le__(self, other: Any) -> "Expr":
+    def __le__(self, other: Any) -> Expr:
         return self.lt_eq(self.__to_expr(other))
 
-    def __eq__(self, other: Any) -> "Expr":  # type: ignore[override]
+    def __eq__(self, other: Any) -> Expr:  # type: ignore[override]
         return self.eq(self.__to_expr(other))
 
-    def __ne__(self, other: Any) -> "Expr":  # type: ignore[override]
+    def __ne__(self, other: Any) -> Expr:  # type: ignore[override]
         return self.neq(self.__to_expr(other))
 
-    def __lt__(self, other: Any) -> "Expr":
+    def __lt__(self, other: Any) -> Expr:
         return self.lt(self.__to_expr(other))
 
-    def __gt__(self, other: Any) -> "Expr":
+    def __gt__(self, other: Any) -> Expr:
         return self.gt(self.__to_expr(other))
 
-    def eq(self, other: "Expr") -> "Expr":
+    def eq(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr.eq(other._pyexpr))
 
-    def neq(self, other: "Expr") -> "Expr":
+    def neq(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr.neq(other._pyexpr))
 
-    def gt(self, other: "Expr") -> "Expr":
+    def gt(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr.gt(other._pyexpr))
 
-    def gt_eq(self, other: "Expr") -> "Expr":
+    def gt_eq(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr.gt_eq(other._pyexpr))
 
-    def lt_eq(self, other: "Expr") -> "Expr":
+    def lt_eq(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr.lt_eq(other._pyexpr))
 
-    def lt(self, other: "Expr") -> "Expr":
+    def lt(self, other: Expr) -> Expr:
         return wrap_expr(self._pyexpr.lt(other._pyexpr))
 
-    def __neg__(self) -> "Expr":
+    def __neg__(self) -> Expr:
         return pli.lit(0) - self
 
     def __array_ufunc__(
         self, ufunc: Callable[..., Any], method: str, *inputs: Any, **kwargs: Any
-    ) -> "Expr":
+    ) -> Expr:
         """
         Numpy universal functions.
         """
+        if not _NUMPY_AVAILABLE:
+            raise ImportError("'numpy' is required for this functionality.")
         out_type = ufunc(np.array([1])).dtype
-        dtype: Optional[Type[DataType]]
+        dtype: type[DataType] | None
         if "float" in str(out_type):
             dtype = Float64
         else:
@@ -190,8 +203,8 @@ class Expr:
 
         args = [inp for inp in inputs if not isinstance(inp, Expr)]
 
-        def function(s: "pli.Series") -> "pli.Series":
-            return ufunc(s, *args, **kwargs)  # pragma: no cover
+        def function(s: pli.Series) -> pli.Series:  # pragma: no cover
+            return ufunc(s, *args, **kwargs)
 
         if "dtype" in kwargs:
             dtype = kwargs["dtype"]
@@ -206,56 +219,120 @@ class Expr:
         self._pyexpr = pli.lit(0)._pyexpr
         self._pyexpr.__setstate__(state)
 
-    def to_physical(self) -> "Expr":
+    def to_physical(self) -> Expr:
         """
         Cast to physical representation of the logical dtype.
 
-        Date -> Int32
-        Datetime -> Int64
-        Time -> Int64
-        other -> other
+        - :func:`polars.datatypes.Date` -> :func:`polars.datatypes.Int32`
+        - :func:`polars.datatypes.Datetime` -> :func:`polars.datatypes.Int64`
+        - :func:`polars.datatypes.Time` -> :func:`polars.datatypes.Int64`
+        - :func:`polars.datatypes.Duration` -> :func:`polars.datatypes.Int64`
+        - :func:`polars.datatypes.Categorical` -> :func:`polars.datatypes.UInt32`
+        - Other data types will be left unchanged.
+
+        Examples
+        --------
+        Replicating the pandas
+        `pd.factorize <https://pandas.pydata.org/docs/reference/api/pandas.factorize.html>`_
+        function.
+
+        >>> pl.DataFrame({"vals": ["a", "x", None, "a"]}).with_columns(
+        ...     [
+        ...         pl.col("vals").cast(pl.Categorical),
+        ...         pl.col("vals")
+        ...         .cast(pl.Categorical)
+        ...         .to_physical()
+        ...         .alias("vals_physical"),
+        ...     ]
+        ... )
+        shape: (4, 2)
+        ┌──────┬───────────────┐
+        │ vals ┆ vals_physical │
+        │ ---  ┆ ---           │
+        │ cat  ┆ u32           │
+        ╞══════╪═══════════════╡
+        │ a    ┆ 0             │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ x    ┆ 1             │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null ┆ null          │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ a    ┆ 0             │
+        └──────┴───────────────┘
+
         """
         return wrap_expr(self._pyexpr.to_physical())
 
-    def any(self) -> "Expr":
+    def any(self) -> Expr:
         """
-        Check if any boolean value in the column is `True`
+        Check if any boolean value in a Boolean column is `True`
 
         Returns
         -------
         Boolean literal
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"TF": [True, False], "FF": [False, False]})
+        >>> df.select(pl.all().any())
+        shape: (1, 2)
+        ┌──────┬───────┐
+        │ TF   ┆ FF    │
+        │ ---  ┆ ---   │
+        │ bool ┆ bool  │
+        ╞══════╪═══════╡
+        │ true ┆ false │
+        └──────┴───────┘
         """
         return wrap_expr(self._pyexpr.any())
 
-    def all(self) -> "Expr":
+    def all(self) -> Expr:
         """
-        Check if all boolean values in the column are `True`
+        Check if all boolean values in a Boolean column are `True`.
+
+        This method is an expression - not to be confused with
+        :func:`polars.all` which is a function to select all columns.
 
         Returns
         -------
         Boolean literal
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {"TT": [True, True], "TF": [True, False], "FF": [False, False]}
+        ... )
+        >>> df.select(pl.col("*").all())
+        shape: (1, 3)
+        ┌──────┬───────┬───────┐
+        │ TT   ┆ TF    ┆ FF    │
+        │ ---  ┆ ---   ┆ ---   │
+        │ bool ┆ bool  ┆ bool  │
+        ╞══════╪═══════╪═══════╡
+        │ true ┆ false ┆ false │
+        └──────┴───────┴───────┘
         """
         return wrap_expr(self._pyexpr.all())
 
-    def sqrt(self) -> "Expr":
+    def sqrt(self) -> Expr:
         """
         Compute the square root of the elements
         """
         return self**0.5
 
-    def log10(self) -> "Expr":
+    def log10(self) -> Expr:
         """
         Return the base 10 logarithm of the input array, element-wise.
         """
         return self.log(10.0)
 
-    def exp(self) -> "Expr":
+    def exp(self) -> Expr:
         """
         Return the exponential element-wise
         """
         return wrap_expr(self._pyexpr.exp())
 
-    def alias(self, name: str) -> "Expr":
+    def alias(self, name: str) -> Expr:
         """
         Rename the output of an expression.
 
@@ -266,7 +343,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 2, 3],
@@ -310,14 +386,15 @@ class Expr:
 
     def exclude(
         self,
-        columns: Union[
-            str,
-            List[str],
-            Union[DataType, Type[DataType]],
-            DataType,
-            Sequence[Union[DataType, Type[DataType]]],
-        ],
-    ) -> "Expr":
+        columns: (
+            str
+            | List[str]
+            | DataType
+            | type[DataType]
+            | DataType
+            | Sequence[DataType | type[DataType]]
+        ),
+    ) -> Expr:
         """
         Exclude certain columns from a wildcard/regex selection.
 
@@ -328,48 +405,81 @@ class Expr:
         columns
             Column(s) to exclude from selection.
             This can be:
-            - a column name, or multiple names
+
+            - a column name, or multiple column names
             - a regular expression starting with `^` and ending with `$`
             - a dtype or multiple dtypes
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
-        ...         "a": [1, 2, 3],
-        ...         "b": ["a", "b", None],
-        ...         "c": [None, 2, 1],
+        ...         "aa": [1, 2, 3],
+        ...         "ba": ["a", "b", None],
+        ...         "cc": [None, 2.5, 1.5],
         ...     }
         ... )
         >>> df
         shape: (3, 3)
         ┌─────┬──────┬──────┐
-        │ a   ┆ b    ┆ c    │
+        │ aa  ┆ ba   ┆ cc   │
         │ --- ┆ ---  ┆ ---  │
-        │ i64 ┆ str  ┆ i64  │
+        │ i64 ┆ str  ┆ f64  │
         ╞═════╪══════╪══════╡
         │ 1   ┆ a    ┆ null │
         ├╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌┤
-        │ 2   ┆ b    ┆ 2    │
+        │ 2   ┆ b    ┆ 2.5  │
         ├╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌┤
-        │ 3   ┆ null ┆ 1    │
+        │ 3   ┆ null ┆ 1.5  │
         └─────┴──────┴──────┘
-        >>> df.select(
-        ...     pl.col("*").exclude("b"),
-        ... )
+
+        Exclude by column name(s):
+
+        >>> df.select(pl.all().exclude("ba"))
         shape: (3, 2)
         ┌─────┬──────┐
-        │ a   ┆ c    │
+        │ aa  ┆ cc   │
         │ --- ┆ ---  │
-        │ i64 ┆ i64  │
+        │ i64 ┆ f64  │
         ╞═════╪══════╡
         │ 1   ┆ null │
         ├╌╌╌╌╌┼╌╌╌╌╌╌┤
-        │ 2   ┆ 2    │
+        │ 2   ┆ 2.5  │
         ├╌╌╌╌╌┼╌╌╌╌╌╌┤
-        │ 3   ┆ 1    │
+        │ 3   ┆ 1.5  │
         └─────┴──────┘
+
+        Exclude by regex, e.g. removing all columns whose names end with the letter "a":
+
+        >>> df.select(pl.all().exclude("^.*a$"))
+        shape: (3, 1)
+        ┌──────┐
+        │ cc   │
+        │ ---  │
+        │ f64  │
+        ╞══════╡
+        │ null │
+        ├╌╌╌╌╌╌┤
+        │ 2.5  │
+        ├╌╌╌╌╌╌┤
+        │ 1.5  │
+        └──────┘
+
+        Exclude by dtype(s), e.g. removing all columns of type Int64 or Float64:
+
+        >>> df.select(pl.all().exclude([pl.Int64, pl.Float64]))
+        shape: (3, 1)
+        ┌──────┐
+        │ ba   │
+        │ ---  │
+        │ str  │
+        ╞══════╡
+        │ a    │
+        ├╌╌╌╌╌╌┤
+        │ b    │
+        ├╌╌╌╌╌╌┤
+        │ null │
+        └──────┘
 
         """
         if isinstance(columns, str):
@@ -392,13 +502,12 @@ class Expr:
         else:
             return wrap_expr(self._pyexpr.exclude_dtype(columns))
 
-    def keep_name(self) -> "Expr":
+    def keep_name(self) -> Expr:
         """
         Keep the original root name of the expression.
 
         Examples
         --------
-
         A groupby aggregation often changes the name of a column.
         With `keep_name` we can keep the original name of the column
 
@@ -410,45 +519,44 @@ class Expr:
         ... )
         >>> df.groupby("a").agg(pl.col("b").list()).sort(by="a")
         shape: (3, 2)
-        ┌─────┬────────────┐
-        │ a   ┆ b_agg_list │
-        │ --- ┆ ---        │
-        │ i64 ┆ list [str] │
-        ╞═════╪════════════╡
-        │ 1   ┆ ["a"]      │
-        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 2   ┆ ["b"]      │
-        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 3   ┆ [null]     │
-        └─────┴────────────┘
+        ┌─────┬───────────┐
+        │ a   ┆ b         │
+        │ --- ┆ ---       │
+        │ i64 ┆ list[str] │
+        ╞═════╪═══════════╡
+        │ 1   ┆ ["a"]     │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 2   ┆ ["b"]     │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 3   ┆ [null]    │
+        └─────┴───────────┘
 
         Keep the original column name:
 
         >>> df.groupby("a").agg(pl.col("b").list().keep_name()).sort(by="a")
         shape: (3, 2)
-        ┌─────┬────────────┐
-        │ a   ┆ b          │
-        │ --- ┆ ---        │
-        │ i64 ┆ list [str] │
-        ╞═════╪════════════╡
-        │ 1   ┆ ["a"]      │
-        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 2   ┆ ["b"]      │
-        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 3   ┆ [null]     │
-        └─────┴────────────┘
+        ┌─────┬───────────┐
+        │ a   ┆ b         │
+        │ --- ┆ ---       │
+        │ i64 ┆ list[str] │
+        ╞═════╪═══════════╡
+        │ 1   ┆ ["a"]     │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 2   ┆ ["b"]     │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 3   ┆ [null]    │
+        └─────┴───────────┘
 
         """
 
         return wrap_expr(self._pyexpr.keep_name())
 
-    def prefix(self, prefix: str) -> "Expr":
+    def prefix(self, prefix: str) -> Expr:
         """
-        Add a prefix the to root column name of the expression.
+        Add a prefix to the root column name of the expression.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "A": [1, 2, 3, 4, 5],
@@ -500,13 +608,12 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.prefix(prefix))
 
-    def suffix(self, suffix: str) -> "Expr":
+    def suffix(self, suffix: str) -> Expr:
         """
-        Add a suffix the to root column name of the expression.
+        Add a suffix to the root column name of the expression.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "A": [1, 2, 3, 4, 5],
@@ -558,24 +665,46 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.suffix(suffix))
 
-    def map_alias(self, f: Callable[[str], str]) -> "Expr":
+    def map_alias(self, f: Callable[[str], str]) -> Expr:
         """
         Rename the output of an expression by mapping a function over the root name.
 
         Parameters
         ----------
         f
-            function that maps root name to new name
+            Function that maps root name to new name.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "A": [1, 2],
+        ...         "B": [3, 4],
+        ...     }
+        ... )
+        >>> df.select(
+        ...     pl.all().reverse().map_alias(lambda colName: colName + "_reverse")
+        ... )
+        shape: (2, 2)
+        ┌───────────┬───────────┐
+        │ A_reverse ┆ B_reverse │
+        │ ---       ┆ ---       │
+        │ i64       ┆ i64       │
+        ╞═══════════╪═══════════╡
+        │ 2         ┆ 4         │
+        ├╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 1         ┆ 3         │
+        └───────────┴───────────┘
+
         """
         return wrap_expr(self._pyexpr.map_alias(f))
 
-    def is_not(self) -> "Expr":
+    def is_not(self) -> Expr:
         """
         Negate a boolean expression.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [True, False, False],
@@ -612,13 +741,12 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.is_not())
 
-    def is_null(self) -> "Expr":
+    def is_null(self) -> Expr:
         """
         Create a boolean expression returning `True` where the expression contains null values.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 2, None, 1, 5],
@@ -646,31 +774,107 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.is_null())
 
-    def is_not_null(self) -> "Expr":
+    def is_not_null(self) -> Expr:
         """
         Create a boolean expression returning `True` where the expression does not contain null values.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "a": [1, 2, None, 1, 5],
+        ...         "b": [1.0, 2.0, float("nan"), 1.0, 5.0],
+        ...     }
+        ... )
+        >>> df.with_column(pl.all().is_not_null().suffix("_not_null"))  # nan != null
+        shape: (5, 4)
+        ┌──────┬─────┬────────────┬────────────┐
+        │ a    ┆ b   ┆ a_not_null ┆ b_not_null │
+        │ ---  ┆ --- ┆ ---        ┆ ---        │
+        │ i64  ┆ f64 ┆ bool       ┆ bool       │
+        ╞══════╪═════╪════════════╪════════════╡
+        │ 1    ┆ 1.0 ┆ true       ┆ true       │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 2    ┆ 2.0 ┆ true       ┆ true       │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null ┆ NaN ┆ false      ┆ true       │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 1    ┆ 1.0 ┆ true       ┆ true       │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 5    ┆ 5.0 ┆ true       ┆ true       │
+        └──────┴─────┴────────────┴────────────┘
+
         """
         return wrap_expr(self._pyexpr.is_not_null())
 
-    def is_finite(self) -> "Expr":
+    def is_finite(self) -> Expr:
         """
         Create a boolean expression returning `True` where the expression values are finite.
+
+        Returns
+        -------
+        out
+            Series of type Boolean
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "A": [1.0, 2],
+        ...         "B": [3.0, np.inf],
+        ...     }
+        ... )
+        >>> df.select(pl.all().is_finite())
+        shape: (2, 2)
+        ┌──────┬───────┐
+        │ A    ┆ B     │
+        │ ---  ┆ ---   │
+        │ bool ┆ bool  │
+        ╞══════╪═══════╡
+        │ true ┆ true  │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+        │ true ┆ false │
+        └──────┴───────┘
         """
         return wrap_expr(self._pyexpr.is_finite())
 
-    def is_infinite(self) -> "Expr":
+    def is_infinite(self) -> Expr:
         """
         Create a boolean expression returning `True` where the expression values are infinite.
+
+        Returns
+        -------
+        out
+            Series of type Boolean
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "A": [1.0, 2],
+        ...         "B": [3.0, np.inf],
+        ...     }
+        ... )
+        >>> df.select(pl.all().is_infinite())
+        shape: (2, 2)
+        ┌───────┬───────┐
+        │ A     ┆ B     │
+        │ ---   ┆ ---   │
+        │ bool  ┆ bool  │
+        ╞═══════╪═══════╡
+        │ false ┆ false │
+        ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+        │ false ┆ true  │
+        └───────┴───────┘
         """
         return wrap_expr(self._pyexpr.is_infinite())
 
-    def is_nan(self) -> "Expr":
+    def is_nan(self) -> Expr:
         """
         Create a boolean expression returning `True` where the expression values are NaN (Not A Number).
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 2, None, 1, 5],
@@ -698,20 +902,46 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.is_nan())
 
-    def is_not_nan(self) -> "Expr":
+    def is_not_nan(self) -> Expr:
         """
         Create a boolean expression returning `True` where the expression values are not NaN (Not A Number).
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "a": [1, 2, None, 1, 5],
+        ...         "b": [1.0, 2.0, float("nan"), 1.0, 5.0],
+        ...     }
+        ... )
+        >>> df.with_column(pl.all().is_not_nan().suffix("_is_not_nan"))  # nan != null
+        shape: (5, 4)
+        ┌──────┬─────┬──────────────┬──────────────┐
+        │ a    ┆ b   ┆ a_is_not_nan ┆ b_is_not_nan │
+        │ ---  ┆ --- ┆ ---          ┆ ---          │
+        │ i64  ┆ f64 ┆ bool         ┆ bool         │
+        ╞══════╪═════╪══════════════╪══════════════╡
+        │ 1    ┆ 1.0 ┆ true         ┆ true         │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 2    ┆ 2.0 ┆ true         ┆ true         │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null ┆ NaN ┆ true         ┆ false        │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 1    ┆ 1.0 ┆ true         ┆ true         │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 5    ┆ 5.0 ┆ true         ┆ true         │
+        └──────┴─────┴──────────────┴──────────────┘
+
         """
         return wrap_expr(self._pyexpr.is_not_nan())
 
-    def agg_groups(self) -> "Expr":
+    def agg_groups(self) -> Expr:
         """
         Get the group indexes of the group by operation.
         Should be used in aggregation context only.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "group": [
@@ -725,30 +955,29 @@ class Expr:
         ...         "value": [94, 95, 96, 97, 97, 99],
         ...     }
         ... )
-        >>> df.groupby("group").agg(pl.col("value").agg_groups())
+        >>> df.groupby("group", maintain_order=True).agg(pl.col("value").agg_groups())
         shape: (2, 2)
-        ┌───────┬────────────┐
-        │ group ┆ value      │
-        │ ---   ┆ ---        │
-        │ str   ┆ list [u32] │
-        ╞═══════╪════════════╡
-        │ two   ┆ [3, 4, 5]  │
-        ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ one   ┆ [0, 1, 2]  │
-        └───────┴────────────┘
+        ┌───────┬───────────┐
+        │ group ┆ value     │
+        │ ---   ┆ ---       │
+        │ str   ┆ list[u32] │
+        ╞═══════╪═══════════╡
+        │ one   ┆ [0, 1, 2] │
+        ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ two   ┆ [3, 4, 5] │
+        └───────┴───────────┘
 
         """
         return wrap_expr(self._pyexpr.agg_groups())
 
-    def count(self) -> "Expr":
+    def count(self) -> Expr:
         """
         Count the number of values in this expression
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [8, 9, 10], "b": [None, 4, 4]})
-        >>> df.select(pl.col("*").count())  # counts nulls
+        >>> df.select(pl.all().count())  # counts nulls
         shape: (1, 2)
         ┌─────┬─────┐
         │ a   ┆ b   │
@@ -761,14 +990,33 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.count())
 
-    def len(self) -> "Expr":
+    def len(self) -> Expr:
         """
-        Alias for count
+        Alias for :func:`count`.
         Count the number of values in this expression
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "a": [8, 9, 10],
+        ...         "b": [None, 4, 4],
+        ...     }
+        ... )
+        >>> df.select(pl.all().len())  # counts nulls
+        shape: (1, 2)
+        ┌─────┬─────┐
+        │ a   ┆ b   │
+        │ --- ┆ --- │
+        │ u32 ┆ u32 │
+        ╞═════╪═════╡
+        │ 3   ┆ 3   │
+        └─────┴─────┘
+
         """
         return self.count()
 
-    def slice(self, offset: Union[int, "Expr"], length: Union[int, "Expr"]) -> "Expr":
+    def slice(self, offset: int | Expr, length: int | Expr) -> Expr:
         """
         Slice the Series.
 
@@ -778,6 +1026,22 @@ class Expr:
             Start index.
         length
             Length of the slice.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [8, 9, 10], "b": [None, 4, 4]})
+        >>> df.select(pl.all().slice(1, 2))
+        shape: (2, 2)
+        ┌─────┬─────┐
+        │ a   ┆ b   │
+        │ --- ┆ --- │
+        │ i64 ┆ i64 │
+        ╞═════╪═════╡
+        │ 9   ┆ 4   │
+        ├╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 10  ┆ 4   │
+        └─────┴─────┘
+
         """
         if isinstance(offset, int):
             offset = pli.lit(offset)
@@ -785,61 +1049,102 @@ class Expr:
             length = pli.lit(length)
         return wrap_expr(self._pyexpr.slice(offset._pyexpr, length._pyexpr))
 
-    def append(self, other: "Expr", upcast: bool = True) -> "Expr":
+    def append(self, other: Expr, upcast: bool = True) -> Expr:
         """
         Append expressions. This is done by adding the chunks of `other` to this `Series`.
 
         Parameters
         ----------
         other
-            Expression to append
+            Expression to append.
         upcast
-            Cast both `Series` to the same supertype
+            Cast both `Series` to the same supertype.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [8, 9, 10], "b": [None, 4, 4]})
+        >>> df.select(pl.all().head(1).append(pl.all().tail(1)))
+        shape: (2, 2)
+        ┌─────┬──────┐
+        │ a   ┆ b    │
+        │ --- ┆ ---  │
+        │ i64 ┆ i64  │
+        ╞═════╪══════╡
+        │ 8   ┆ null │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌┤
+        │ 10  ┆ 4    │
+        └─────┴──────┘
+
         """
         other = expr_to_lit_or_expr(other)
         return wrap_expr(self._pyexpr.append(other._pyexpr, upcast))
 
-    def rechunk(self) -> "Expr":
+    def rechunk(self) -> Expr:
         """
         Create a single chunk of memory for this Series.
         """
         return wrap_expr(self._pyexpr.rechunk())
 
-    def drop_nulls(self) -> "Expr":
+    def drop_nulls(self) -> Expr:
         """
         Drop null values.
 
-        Warnings
-        --------
-        NOTE that null values are not floating point NaN values!
-        To drop NaN values, use `drop_nans()`.
+        .. warning::
+            Note that null values are not floating point NaN values!
+            To drop NaN values, use :func:`drop_nans`.
 
         Examples
         --------
-
-        >>> df = pl.DataFrame({"a": [8, 9, 10], "b": [None, 4, 4]})
+        >>> df = pl.DataFrame(
+        ...     {"a": [8, 9, 10, 11], "b": [None, 4.0, 4.0, float("nan")]}
+        ... )
         >>> df.select(pl.col("b").drop_nulls())
-        shape: (2, 1)
+        shape: (3, 1)
         ┌─────┐
         │ b   │
         │ --- │
-        │ i64 │
+        │ f64 │
         ╞═════╡
-        │ 4   │
+        │ 4.0 │
         ├╌╌╌╌╌┤
-        │ 4   │
+        │ 4.0 │
+        ├╌╌╌╌╌┤
+        │ NaN │
         └─────┘
 
         """
         return wrap_expr(self._pyexpr.drop_nulls())
 
-    def drop_nans(self) -> "Expr":
+    def drop_nans(self) -> Expr:
         """
         Drop floating point NaN values
+
+        .. warning::
+            Note that NaN values are not null values!
+            To drop null values, use :func:`drop_nulls`.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {"a": [8, 9, 10, 11], "b": [None, 4.0, 4.0, float("nan")]}
+        ... )
+        >>> df.select(pl.col("b").drop_nans())
+        shape: (3, 1)
+        ┌──────┐
+        │ b    │
+        │ ---  │
+        │ f64  │
+        ╞══════╡
+        │ null │
+        ├╌╌╌╌╌╌┤
+        │ 4.0  │
+        ├╌╌╌╌╌╌┤
+        │ 4.0  │
+        └──────┘
         """
         return wrap_expr(self._pyexpr.drop_nans())
 
-    def cumsum(self, reverse: bool = False) -> "Expr":
+    def cumsum(self, reverse: bool = False) -> Expr:
         """
         Get an array with the cumulative sum computed at every element.
 
@@ -852,10 +1157,34 @@ class Expr:
         -----
         Dtypes in {Int8, UInt8, Int16, UInt16} are cast to
         Int64 before summing to prevent overflow issues.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 2, 3, 4]})
+        >>> df.select(
+        ...     [
+        ...         pl.col("a").cumsum(),
+        ...         pl.col("a").cumsum(reverse=True).alias("a_reverse"),
+        ...     ]
+        ... )
+        shape: (4, 2)
+        ┌─────┬───────────┐
+        │ a   ┆ a_reverse │
+        │ --- ┆ ---       │
+        │ i64 ┆ i64       │
+        ╞═════╪═══════════╡
+        │ 1   ┆ 10        │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 3   ┆ 9         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 6   ┆ 7         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 10  ┆ 4         │
+        └─────┴───────────┘
         """
         return wrap_expr(self._pyexpr.cumsum(reverse))
 
-    def cumprod(self, reverse: bool = False) -> "Expr":
+    def cumprod(self, reverse: bool = False) -> Expr:
         """
         Get an array with the cumulative product computed at every element.
 
@@ -868,10 +1197,34 @@ class Expr:
         -----
         Dtypes in {Int8, UInt8, Int16, UInt16} are cast to
         Int64 before summing to prevent overflow issues.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 2, 3, 4]})
+        >>> df.select(
+        ...     [
+        ...         pl.col("a").cumprod(),
+        ...         pl.col("a").cumprod(reverse=True).alias("a_reverse"),
+        ...     ]
+        ... )
+        shape: (4, 2)
+        ┌─────┬───────────┐
+        │ a   ┆ a_reverse │
+        │ --- ┆ ---       │
+        │ i64 ┆ i64       │
+        ╞═════╪═══════════╡
+        │ 1   ┆ 24        │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 2   ┆ 24        │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 6   ┆ 12        │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 24  ┆ 4         │
+        └─────┴───────────┘
         """
         return wrap_expr(self._pyexpr.cumprod(reverse))
 
-    def cummin(self, reverse: bool = False) -> "Expr":
+    def cummin(self, reverse: bool = False) -> Expr:
         """
         Get an array with the cumulative min computed at every element.
 
@@ -879,10 +1232,34 @@ class Expr:
         ----------
         reverse
             Reverse the operation.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 2, 3, 4]})
+        >>> df.select(
+        ...     [
+        ...         pl.col("a").cummin(),
+        ...         pl.col("a").cummin(reverse=True).alias("a_reverse"),
+        ...     ]
+        ... )
+        shape: (4, 2)
+        ┌─────┬───────────┐
+        │ a   ┆ a_reverse │
+        │ --- ┆ ---       │
+        │ i64 ┆ i64       │
+        ╞═════╪═══════════╡
+        │ 1   ┆ 1         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 1   ┆ 2         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 1   ┆ 3         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 1   ┆ 4         │
+        └─────┴───────────┘
         """
         return wrap_expr(self._pyexpr.cummin(reverse))
 
-    def cummax(self, reverse: bool = False) -> "Expr":
+    def cummax(self, reverse: bool = False) -> Expr:
         """
         Get an array with the cumulative max computed at every element.
 
@@ -890,10 +1267,35 @@ class Expr:
         ----------
         reverse
             Reverse the operation.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 2, 3, 4]})
+        >>> df.select(
+        ...     [
+        ...         pl.col("a").cummax(),
+        ...         pl.col("a").cummax(reverse=True).alias("a_reverse"),
+        ...     ]
+        ... )
+        shape: (4, 2)
+        ┌─────┬───────────┐
+        │ a   ┆ a_reverse │
+        │ --- ┆ ---       │
+        │ i64 ┆ i64       │
+        ╞═════╪═══════════╡
+        │ 1   ┆ 4         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 2   ┆ 4         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 3   ┆ 4         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 4   ┆ 4         │
+        └─────┴───────────┘
+
         """
         return wrap_expr(self._pyexpr.cummax(reverse))
 
-    def cumcount(self, reverse: bool = False) -> "Expr":
+    def cumcount(self, reverse: bool = False) -> Expr:
         """
         Get an array with the cumulative count computed at every element.
         Counting from 0 to len
@@ -902,26 +1304,88 @@ class Expr:
         ----------
         reverse
             Reverse the operation.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 2, 3, 4]})
+        >>> df.select(
+        ...     [
+        ...         pl.col("a").cumcount(),
+        ...         pl.col("a").cumcount(reverse=True).alias("a_reverse"),
+        ...     ]
+        ... )
+        shape: (4, 2)
+        ┌─────┬───────────┐
+        │ a   ┆ a_reverse │
+        │ --- ┆ ---       │
+        │ u32 ┆ u32       │
+        ╞═════╪═══════════╡
+        │ 0   ┆ 3         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 1   ┆ 2         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 2   ┆ 1         │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 3   ┆ 0         │
+        └─────┴───────────┘
         """
         return wrap_expr(self._pyexpr.cumcount(reverse))
 
-    def floor(self) -> "Expr":
+    def floor(self) -> Expr:
         """
         Floor underlying floating point array to the lowest integers smaller or equal to the float value.
 
         Only works on floating point Series
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [0.3, 0.5, 1.0, 1.1]})
+        >>> df.select(pl.col("a").floor())
+        shape: (4, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 0.0 │
+        ├╌╌╌╌╌┤
+        │ 0.0 │
+        ├╌╌╌╌╌┤
+        │ 1.0 │
+        ├╌╌╌╌╌┤
+        │ 1.0 │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.floor())
 
-    def ceil(self) -> "Expr":
+    def ceil(self) -> Expr:
         """
         Ceil underlying floating point array to the highest integers smaller or equal to the float value.
 
         Only works on floating point Series
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [0.3, 0.5, 1.0, 1.1]})
+        >>> df.select(pl.col("a").ceil())
+        shape: (4, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 1.0 │
+        ├╌╌╌╌╌┤
+        │ 1.0 │
+        ├╌╌╌╌╌┤
+        │ 1.0 │
+        ├╌╌╌╌╌┤
+        │ 2.0 │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.ceil())
 
-    def round(self, decimals: int) -> "Expr":
+    def round(self, decimals: int) -> Expr:
         """
         Round underlying floating point data by `decimals` digits.
 
@@ -929,21 +1393,39 @@ class Expr:
         ----------
         decimals
             Number of decimals to round by.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [0.33, 0.52, 1.02, 1.17]})
+        >>> df.select(pl.col("a").round(1))
+        shape: (4, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 0.3 │
+        ├╌╌╌╌╌┤
+        │ 0.5 │
+        ├╌╌╌╌╌┤
+        │ 1.0 │
+        ├╌╌╌╌╌┤
+        │ 1.2 │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.round(decimals))
 
-    def dot(self, other: Union["Expr", str]) -> "Expr":
+    def dot(self, other: Expr | str) -> Expr:
         """
         Compute the dot/inner product between two Expressions
 
         Parameters
         ----------
         other
-            Expression to compute dot product with
+            Expression to compute dot product with.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 3, 5],
@@ -964,26 +1446,47 @@ class Expr:
         other = expr_to_lit_or_expr(other, str_to_lit=False)
         return wrap_expr(self._pyexpr.dot(other._pyexpr))
 
-    def mode(self) -> "Expr":
+    def mode(self) -> Expr:
         """
-        Compute the most occurring value(s). Can return multiple Values
+        Compute the most occurring value(s).
+        Can return multiple Values.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "a": [1, 1, 2, 3],
+        ...         "b": [1, 1, 2, 2],
+        ...     }
+        ... )
+        >>> df.select(pl.all().mode())  # doctest: +IGNORE_RESULT
+        shape: (2, 2)
+        ┌─────┬─────┐
+        │ a   ┆ b   │
+        │ --- ┆ --- │
+        │ i64 ┆ i64 │
+        ╞═════╪═════╡
+        │ 1   ┆ 1   │
+        ├╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 1   ┆ 2   │
+        └─────┴─────┘
         """
         return wrap_expr(self._pyexpr.mode())
 
-    def cast(self, dtype: Union[Type[Any], DataType], strict: bool = True) -> "Expr":
+    def cast(self, dtype: type[Any] | DataType, strict: bool = True) -> Expr:
         """
         Cast between data types.
 
         Parameters
         ----------
         dtype
-            DataType to cast to
+            DataType to cast to.
         strict
-            Throw an error if a cast could not be done for instance due to an overflow
+            Throw an error if a cast could not be done.
+            For instance, due to an overflow.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [1, 2, 3], "b": ["4", "5", "6"]})
         >>> df.with_columns(
         ...     [
@@ -1008,7 +1511,7 @@ class Expr:
         dtype = py_type_to_dtype(dtype)
         return wrap_expr(self._pyexpr.cast(dtype, strict))
 
-    def sort(self, reverse: bool = False, nulls_last: bool = False) -> "Expr":
+    def sort(self, reverse: bool = False, nulls_last: bool = False) -> Expr:
         """
         Sort this column. In projection/ selection context the whole column is sorted.
         If used in a groupby context, the groups are sorted.
@@ -1020,10 +1523,75 @@ class Expr:
             True -> order from large to small.
         nulls_last
             If True nulls are considered to be larger than any valid value
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "group": [
+        ...             "one",
+        ...             "one",
+        ...             "one",
+        ...             "two",
+        ...             "two",
+        ...             "two",
+        ...         ],
+        ...         "value": [1, 98, 2, 3, 99, 4],
+        ...     }
+        ... )
+        >>> df.select(pl.col("value").sort())
+        shape: (6, 1)
+        ┌───────┐
+        │ value │
+        │ ---   │
+        │ i64   │
+        ╞═══════╡
+        │ 1     │
+        ├╌╌╌╌╌╌╌┤
+        │ 2     │
+        ├╌╌╌╌╌╌╌┤
+        │ 3     │
+        ├╌╌╌╌╌╌╌┤
+        │ 4     │
+        ├╌╌╌╌╌╌╌┤
+        │ 98    │
+        ├╌╌╌╌╌╌╌┤
+        │ 99    │
+        └───────┘
+        >>> df.select(pl.col("value").sort())
+        shape: (6, 1)
+        ┌───────┐
+        │ value │
+        │ ---   │
+        │ i64   │
+        ╞═══════╡
+        │ 1     │
+        ├╌╌╌╌╌╌╌┤
+        │ 2     │
+        ├╌╌╌╌╌╌╌┤
+        │ 3     │
+        ├╌╌╌╌╌╌╌┤
+        │ 4     │
+        ├╌╌╌╌╌╌╌┤
+        │ 98    │
+        ├╌╌╌╌╌╌╌┤
+        │ 99    │
+        └───────┘
+        >>> df.groupby("group").agg(pl.col("value").sort())  # doctest: +IGNORE_RESULT
+        shape: (2, 2)
+        ┌───────┬────────────┐
+        │ group ┆ value      │
+        │ ---   ┆ ---        │
+        │ str   ┆ list[i64]  │
+        ╞═══════╪════════════╡
+        │ two   ┆ [3, 4, 99] │
+        ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ one   ┆ [1, 2, 98] │
+        └───────┴────────────┘
         """
         return wrap_expr(self._pyexpr.sort_with(reverse, nulls_last))
 
-    def arg_sort(self, reverse: bool = False) -> "Expr":
+    def arg_sort(self, reverse: bool = False) -> Expr:
         """
         Get the index values that would sort this column.
 
@@ -1040,7 +1608,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [20, 10, 30],
@@ -1062,23 +1629,58 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.arg_sort(reverse))
 
-    def arg_max(self) -> "Expr":
+    def arg_max(self) -> Expr:
         """
         Get the index of the maximal value.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "a": [20, 10, 30],
+        ...     }
+        ... )
+        >>> df.select(pl.col("a").arg_max())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ u32 │
+        ╞═════╡
+        │ 2   │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.arg_max())
 
-    def arg_min(self) -> "Expr":
+    def arg_min(self) -> Expr:
         """
         Get the index of the minimal value.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "a": [20, 10, 30],
+        ...     }
+        ... )
+        >>> df.select(pl.col("a").arg_min())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ u32 │
+        ╞═════╡
+        │ 1   │
+        └─────┘
+
         """
         return wrap_expr(self._pyexpr.arg_min())
 
     def sort_by(
         self,
-        by: Union["Expr", str, List[Union["Expr", str]]],
-        reverse: Union[bool, List[bool]] = False,
-    ) -> "Expr":
+        by: Expr | str | List[Expr | str],
+        reverse: bool | List[bool] = False,
+    ) -> Expr:
         """
         Sort this column by the ordering of another column, or multiple other columns.
         In projection/ selection context the whole column is sorted.
@@ -1091,6 +1693,41 @@ class Expr:
         reverse
             False -> order from small to large.
             True -> order from large to small.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "group": [
+        ...             "one",
+        ...             "one",
+        ...             "one",
+        ...             "two",
+        ...             "two",
+        ...             "two",
+        ...         ],
+        ...         "value": [1, 98, 2, 3, 99, 4],
+        ...     }
+        ... )
+        >>> df.select(pl.col("group").sort_by("value"))
+        shape: (6, 1)
+        ┌───────┐
+        │ group │
+        │ ---   │
+        │ str   │
+        ╞═══════╡
+        │ one   │
+        ├╌╌╌╌╌╌╌┤
+        │ one   │
+        ├╌╌╌╌╌╌╌┤
+        │ two   │
+        ├╌╌╌╌╌╌╌┤
+        │ two   │
+        ├╌╌╌╌╌╌╌┤
+        │ one   │
+        ├╌╌╌╌╌╌╌┤
+        │ two   │
+        └───────┘
         """
         if not isinstance(by, list):
             by = [by]
@@ -1100,7 +1737,7 @@ class Expr:
 
         return wrap_expr(self._pyexpr.sort_by(by, reverse))
 
-    def take(self, index: Union[List[int], "Expr", "pli.Series", np.ndarray]) -> "Expr":
+    def take(self, index: List[int] | Expr | pli.Series | np.ndarray) -> Expr:
         """
         Take values by index.
 
@@ -1115,7 +1752,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "group": [
@@ -1129,7 +1765,7 @@ class Expr:
         ...         "value": [1, 98, 2, 3, 99, 4],
         ...     }
         ... )
-        >>> df.groupby("group").agg(pl.col("value").take(1))
+        >>> df.groupby("group", maintain_order=True).agg(pl.col("value").take(1))
         shape: (2, 2)
         ┌───────┬───────┐
         │ group ┆ value │
@@ -1142,13 +1778,18 @@ class Expr:
         └───────┴───────┘
 
         """
-        if isinstance(index, (list, np.ndarray)):
+        if isinstance(index, list):
+            index_lit = pli.lit(pli.Series("", index, dtype=UInt32))
+        elif _NUMPY_AVAILABLE and isinstance(index, np.ndarray):
             index_lit = pli.lit(pli.Series("", index, dtype=UInt32))
         else:
-            index_lit = pli.expr_to_lit_or_expr(index, str_to_lit=False)
+            index_lit = pli.expr_to_lit_or_expr(
+                index,  # type: ignore[arg-type]
+                str_to_lit=False,
+            )
         return pli.wrap_expr(self._pyexpr.take(index_lit._pyexpr))
 
-    def shift(self, periods: int = 1) -> "Expr":
+    def shift(self, periods: int = 1) -> Expr:
         """
         Shift the values by a given period and fill the parts that will be empty due to this operation
         with nulls.
@@ -1160,7 +1801,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [1, 2, 3, 4]})
         >>> df.select(pl.col("foo").shift(1))
         shape: (4, 1)
@@ -1182,11 +1822,11 @@ class Expr:
         return wrap_expr(self._pyexpr.shift(periods))
 
     def shift_and_fill(
-        self, periods: int, fill_value: Union[int, float, bool, str, "Expr"]
-    ) -> "Expr":
+        self, periods: int, fill_value: int | float | bool | str | Expr
+    ) -> Expr:
         """
         Shift the values by a given period and fill the parts that will be empty due to this operation
-        with the result of the `fill_value` expression.
+        with the result of the ``fill_value`` expression.
 
         Parameters
         ----------
@@ -1194,34 +1834,48 @@ class Expr:
             Number of places to shift (may be negative).
         fill_value
             Fill None values with the result of this expression.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"foo": [1, 2, 3, 4]})
+        >>> df.select(pl.col("foo").shift_and_fill(1, "a"))
+        shape: (4, 1)
+        ┌─────┐
+        │ foo │
+        │ --- │
+        │ str │
+        ╞═════╡
+        │ a   │
+        ├╌╌╌╌╌┤
+        │ 1   │
+        ├╌╌╌╌╌┤
+        │ 2   │
+        ├╌╌╌╌╌┤
+        │ 3   │
+        └─────┘
         """
         fill_value = expr_to_lit_or_expr(fill_value, str_to_lit=True)
         return wrap_expr(self._pyexpr.shift_and_fill(periods, fill_value._pyexpr))
 
     def fill_null(
         self,
-        fill_value: Union[int, float, bool, str, "Expr"],
-        limit: Optional[int] = None,
-    ) -> "Expr":
+        fill_value: int | float | bool | str | Expr,
+        limit: int | None = None,
+    ) -> Expr:
         """
         Fill null values using a filling strategy, literal, or Expr.
 
+        Parameters
+        ----------
         fill_value
-            One of:
-            - "backward"
-            - "forward"
-            - "min"
-            - "max"
-            - "mean"
-            - "one"
-            - "zero"
-            Or an expression.
+            One of {"backward", "forward", "min", "max", "mean", "one", "zero"}
+            or an expression.
         limit
-            if strategy is 'forward' or 'backward', this the number of consecutive null values to forward/backward fill.
+            The number of consecutive null values to forward/backward fill.
+            Only valid if ``fill_value`` is 'forward' or 'backward'.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [1, 2, None], "b": [4, None, 6]})
         >>> df.fill_null("zero")
         shape: (3, 2)
@@ -1267,39 +1921,95 @@ class Expr:
         fill_value = expr_to_lit_or_expr(fill_value, str_to_lit=True)
         return wrap_expr(self._pyexpr.fill_null(fill_value._pyexpr))
 
-    def fill_nan(self, fill_value: Union[str, int, float, bool, "Expr"]) -> "Expr":
+    def fill_nan(self, fill_value: str | int | float | bool | Expr) -> Expr:
         """
         Fill floating point NaN value with a fill value
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {"a": [1.0, None, float("nan")], "b": [4.0, float("nan"), 6]}
+        ... )
+        >>> df.fill_nan("zero")
+        shape: (3, 2)
+        ┌──────┬──────┐
+        │ a    ┆ b    │
+        │ ---  ┆ ---  │
+        │ str  ┆ str  │
+        ╞══════╪══════╡
+        │ 1.0  ┆ 4.0  │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+        │ null ┆ zero │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+        │ zero ┆ 6.0  │
+        └──────┴──────┘
         """
         fill_value = expr_to_lit_or_expr(fill_value, str_to_lit=True)
         return wrap_expr(self._pyexpr.fill_nan(fill_value._pyexpr))
 
-    def forward_fill(self, limit: Optional[int] = None) -> "Expr":
+    def forward_fill(self, limit: int | None = None) -> Expr:
         """
-        Fill missing values with the latest seen values
+        Fill missing values with the latest seen values.
 
         Parameters
         ----------
         limit
-            This the number of consecutive null values to forward/backward fill.
+            The number of consecutive null values to forward fill.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 2, None], "b": [4, None, 6]})
+        >>> df.select(pl.all().forward_fill())
+        shape: (3, 2)
+        ┌─────┬─────┐
+        │ a   ┆ b   │
+        │ --- ┆ --- │
+        │ i64 ┆ i64 │
+        ╞═════╪═════╡
+        │ 1   ┆ 4   │
+        ├╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 2   ┆ 4   │
+        ├╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 2   ┆ 6   │
+        └─────┴─────┘
+
         """
         return wrap_expr(self._pyexpr.forward_fill(limit))
 
-    def backward_fill(self, limit: Optional[int] = None) -> "Expr":
+    def backward_fill(self, limit: int | None = None) -> Expr:
         """
-        Fill missing values with the next to be seen values
+        Fill missing values with the next to be seen values.
 
         Parameters
         ----------
         limit
-            This the number of consecutive null values to forward/backward fill.
+            The number of consecutive null values to backward fill.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 2, None], "b": [4, None, 6]})
+        >>> df.select(pl.all().backward_fill())
+        shape: (3, 2)
+        ┌──────┬─────┐
+        │ a    ┆ b   │
+        │ ---  ┆ --- │
+        │ i64  ┆ i64 │
+        ╞══════╪═════╡
+        │ 1    ┆ 4   │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 2    ┆ 6   │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌┤
+        │ null ┆ 6   │
+        └──────┴─────┘
         """
         return wrap_expr(self._pyexpr.backward_fill(limit))
 
-    def reverse(self) -> "Expr":
+    def reverse(self) -> Expr:
         """
         Reverse the selection.
 
+        Examples
+        --------
         >>> df = pl.DataFrame(
         ...     {
         ...         "A": [1, 2, 3, 4, 5],
@@ -1334,31 +2044,85 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.reverse())
 
-    def std(self) -> "Expr":
+    def std(self) -> Expr:
         """
         Get standard deviation.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [-1, 0, 1]})
+        >>> df.select(pl.col("a").std())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 1.0 │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.std())
 
-    def var(self) -> "Expr":
+    def var(self) -> Expr:
         """
         Get variance.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [-1, 0, 1]})
+        >>> df.select(pl.col("a").var())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 1.0 │
+        └─────┘
+
         """
         return wrap_expr(self._pyexpr.var())
 
-    def max(self) -> "Expr":
+    def max(self) -> Expr:
         """
         Get maximum value.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [-1, 0, 1]})
+        >>> df.select(pl.col("a").max())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ i64 │
+        ╞═════╡
+        │ 1   │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.max())
 
-    def min(self) -> "Expr":
+    def min(self) -> Expr:
         """
         Get minimum value.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [-1, 0, 1]})
+        >>> df.select(pl.col("a").min())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ i64 │
+        ╞═════╡
+        │ -1  │
+        └─────┘
+
         """
         return wrap_expr(self._pyexpr.min())
 
-    def sum(self) -> "Expr":
+    def sum(self) -> Expr:
         """
         Get sum value.
 
@@ -1366,42 +2130,126 @@ class Expr:
         -----
         Dtypes in {Int8, UInt8, Int16, UInt16} are cast to
         Int64 before summing to prevent overflow issues.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [-1, 0, 1]})
+        >>> df.select(pl.col("a").sum())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ i64 │
+        ╞═════╡
+        │  0  │
+        └─────┘
+
         """
         return wrap_expr(self._pyexpr.sum())
 
-    def mean(self) -> "Expr":
+    def mean(self) -> Expr:
         """
         Get mean value.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [-1, 0, 1]})
+        >>> df.select(pl.col("a").mean())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 0.0 │
+        └─────┘
+
         """
         return wrap_expr(self._pyexpr.mean())
 
-    def median(self) -> "Expr":
+    def median(self) -> Expr:
         """
         Get median value using linear interpolation.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [-1, 0, 1]})
+        >>> df.select(pl.col("a").median())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 0.0 │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.median())
 
-    def product(self) -> "Expr":
+    def product(self) -> Expr:
         """
         Compute the product of an expression
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 2, 3]})
+        >>> df.select(pl.col("a").product())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ i64 │
+        ╞═════╡
+        │ 6   │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.product())
 
     def n_unique(self) -> "Expr":
-        """Count unique values."""
+        """
+        Count unique values.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 1, 2]})
+        >>> df.select(pl.col("a").n_unique())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ u32 │
+        ╞═════╡
+        │ 2   │
+        └─────┘
+
+        """
         return wrap_expr(self._pyexpr.n_unique())
 
     def null_count(self) -> "Expr":
-        """Count null values."""
+        """
+        Count null values.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [None, 1, None], "b": [1, 2, 3]})
+        >>> df.select(pl.all().null_count())
+        shape: (1, 2)
+        ┌─────┬─────┐
+        │ a   ┆ b   │
+        │ --- ┆ --- │
+        │ u32 ┆ u32 │
+        ╞═════╪═════╡
+        │ 2   ┆ 0   │
+        └─────┴─────┘
+        """
         return wrap_expr(self._pyexpr.null_count())
 
-    def arg_unique(self) -> "Expr":
+    def arg_unique(self) -> Expr:
         """
         Get index of first unique value.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [8, 9, 10], "b": [None, 4, 4]})
         >>> df.select(pl.col("a").arg_unique())
         shape: (3, 1)
@@ -1431,7 +2279,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.arg_unique())
 
-    def unique(self, maintain_order: bool = False) -> "Expr":
+    def unique(self, maintain_order: bool = False) -> Expr:
         """
         Get unique values of this expression.
 
@@ -1439,30 +2287,83 @@ class Expr:
         ----------
         maintain_order
             Maintain order of data. This requires more work.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 1, 2]})
+        >>> df.select(pl.col("a").unique())  # doctest: +IGNORE_RESULT
+        shape: (2, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ i64 │
+        ╞═════╡
+        │ 2   │
+        ├╌╌╌╌╌┤
+        │ 1   │
+        └─────┘
+        >>> df.select(pl.col("a").unique(maintain_order=True))
+        shape: (2, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ i64 │
+        ╞═════╡
+        │ 1   │
+        ├╌╌╌╌╌┤
+        │ 2   │
+        └─────┘
+
         """
         if maintain_order:
             return wrap_expr(self._pyexpr.unique_stable())
         return wrap_expr(self._pyexpr.unique())
 
-    def first(self) -> "Expr":
+    def first(self) -> Expr:
         """
         Get the first value.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 1, 2]})
+        >>> df.select(pl.col("a").first())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ i64 │
+        ╞═════╡
+        │ 1   │
+        └─────┘
         """
         return wrap_expr(self._pyexpr.first())
 
-    def last(self) -> "Expr":
+    def last(self) -> Expr:
         """
         Get the last value.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 1, 2]})
+        >>> df.select(pl.col("a").last())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ i64 │
+        ╞═════╡
+        │ 2   │
+        └─────┘
+
         """
         return wrap_expr(self._pyexpr.last())
 
-    def list(self) -> "Expr":
+    def list(self) -> Expr:
         """
         Aggregate to list.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 2, 3],
@@ -1471,22 +2372,22 @@ class Expr:
         ... )
         >>> df.select(pl.all().list())
         shape: (1, 2)
-        ┌────────────┬────────────┐
-        │ a          ┆ b          │
-        │ ---        ┆ ---        │
-        │ list [i64] ┆ list [i64] │
-        ╞════════════╪════════════╡
-        │ [1, 2, 3]  ┆ [4, 5, 6]  │
-        └────────────┴────────────┘
+        ┌───────────┬───────────┐
+        │ a         ┆ b         │
+        │ ---       ┆ ---       │
+        │ list[i64] ┆ list[i64] │
+        ╞═══════════╪═══════════╡
+        │ [1, 2, 3] ┆ [4, 5, 6] │
+        └───────────┴───────────┘
 
         """
         return wrap_expr(self._pyexpr.list())
 
-    def over(self, expr: Union[str, "Expr", List[Union["Expr", str]]]) -> "Expr":
+    def over(self, expr: str | Expr | List[Expr | str]) -> Expr:
         """
         Apply window function over a subgroup.
         This is similar to a groupby + aggregation + self join.
-        Or similar to [window functions in Postgres](https://www.postgresql.org/docs/9.1/tutorial-window.html)
+        Or similar to `window functions in Postgres <https://www.postgresql.org/docs/current/tutorial-window.html>`_.
 
         Parameters
         ----------
@@ -1495,7 +2396,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "groups": [1, 1, 2, 2, 1, 2, 3, 3, 1],
@@ -1542,13 +2442,30 @@ class Expr:
 
         return wrap_expr(self._pyexpr.over(pyexprs))
 
-    def is_unique(self) -> "Expr":
+    def is_unique(self) -> Expr:
         """
         Get mask of unique values.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 1, 2]})
+        >>> df.select(pl.col("a").is_unique())
+        shape: (3, 1)
+        ┌───────┐
+        │ a     │
+        │ ---   │
+        │ bool  │
+        ╞═══════╡
+        │ false │
+        ├╌╌╌╌╌╌╌┤
+        │ false │
+        ├╌╌╌╌╌╌╌┤
+        │ true  │
+        └───────┘
         """
         return wrap_expr(self._pyexpr.is_unique())
 
-    def is_first(self) -> "Expr":
+    def is_first(self) -> Expr:
         """
         Get a mask of the first unique value.
 
@@ -1558,7 +2475,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "num": [1, 2, 3, 1, 5],
@@ -1585,13 +2501,30 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.is_first())
 
-    def is_duplicated(self) -> "Expr":
+    def is_duplicated(self) -> Expr:
         """
         Get mask of duplicated values.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1, 1, 2]})
+        >>> df.select(pl.col("a").is_duplicated())
+        shape: (3, 1)
+        ┌───────┐
+        │ a     │
+        │ ---   │
+        │ bool  │
+        ╞═══════╡
+        │ true  │
+        ├╌╌╌╌╌╌╌┤
+        │ true  │
+        ├╌╌╌╌╌╌╌┤
+        │ false │
+        └───────┘
         """
         return wrap_expr(self._pyexpr.is_duplicated())
 
-    def quantile(self, quantile: float, interpolation: str = "nearest") -> "Expr":
+    def quantile(self, quantile: float, interpolation: str = "nearest") -> Expr:
         """
         Get quantile value.
 
@@ -1603,10 +2536,60 @@ class Expr:
 
         interpolation
             interpolation type, options: ['nearest', 'higher', 'lower', 'midpoint', 'linear']
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [0, 1, 2, 3, 4, 5]})
+        >>> df.select(pl.col("a").quantile(0.3))
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 1.0 │
+        └─────┘
+        >>> df.select(pl.col("a").quantile(0.3, interpolation="higher"))
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 2.0 │
+        └─────┘
+        >>> df.select(pl.col("a").quantile(0.3, interpolation="lower"))
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 1.0 │
+        └─────┘
+        >>> df.select(pl.col("a").quantile(0.3, interpolation="midpoint"))
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 1.5 │
+        └─────┘
+        >>> df.select(pl.col("a").quantile(0.3, interpolation="linear"))
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 1.5 │
+        └─────┘
+
         """
         return wrap_expr(self._pyexpr.quantile(quantile, interpolation))
 
-    def filter(self, predicate: "Expr") -> "Expr":
+    def filter(self, predicate: Expr) -> Expr:
         """
         Filter a single column.
         Mostly useful in in aggregation context. If you want to filter on a DataFrame level, use `LazyFrame.filter`.
@@ -1618,7 +2601,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.filter(predicate._pyexpr))
 
-    def where(self, predicate: "Expr") -> "Expr":
+    def where(self, predicate: Expr) -> Expr:
         """
         Alias for filter
 
@@ -1631,45 +2614,19 @@ class Expr:
 
     def map(
         self,
-        f: Callable[["pli.Series"], Union["pli.Series", Any]],
-        return_dtype: Optional[Type[DataType]] = None,
+        f: Callable[[pli.Series], pli.Series | Any],
+        return_dtype: type[DataType] | None = None,
         agg_list: bool = False,
-    ) -> "Expr":
+    ) -> Expr:
         """
-        Apply a custom python function. This function must produce a `Series`. Any other value will be stored as
-        null/missing. If you want to apply a function over single values, consider using `apply`.
+        Apply a custom python function to a Series or sequence of Series.
 
-        [read more in the book](https://pola-rs.github.io/polars-book/user-guide/howcani/apply/udfs.html)
+        The output of this custom function must be a Series.
+        If you want to apply a custom function elementwise over single values, see :func:`apply`.
+        A use case for ``map`` is when you want to transform an expression
+        with a third-party library.
 
-        Parameters
-        ----------
-        f
-            Lambda/ function to apply.
-        return_dtype
-            Dtype of the output Series.
-        agg_list
-
-        """
-        if return_dtype is not None:
-            return_dtype = py_type_to_dtype(return_dtype)
-        return wrap_expr(self._pyexpr.map(f, return_dtype, agg_list))
-
-    def apply(
-        self,
-        f: Union[Callable[["pli.Series"], "pli.Series"], Callable[[Any], Any]],
-        return_dtype: Optional[Type[DataType]] = None,
-    ) -> "Expr":
-        """
-        Apply a custom function in a GroupBy or Projection context.
-
-        Depending on the context it has the following behavior:
-
-        * Select/Project
-            expected type `f`: Callable[[Any], Any]
-            Applies a python function over each individual value in the column.
-        * GroupBy
-            expected type `f`: Callable[[Series], Series]
-            Applies a python function over each group.
+        Read more in `the book <https://pola-rs.github.io/polars-book/user-guide/dsl/custom_functions.html>`_.
 
         Parameters
         ----------
@@ -1680,13 +2637,102 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
-        ...         "a": [1, 2, 1, 1],
+        ...         "sine": [0.0, 1.0, 0.0, -1.0],
+        ...         "cosine": [1.0, 0.0, -1.0, 0.0],
+        ...     }
+        ... )
+        >>> (df.select(pl.all().map(lambda x: x.to_numpy().argmax())))
+        shape: (1, 2)
+        ┌──────┬────────┐
+        │ sine ┆ cosine │
+        │ ---  ┆ ---    │
+        │ i64  ┆ i64    │
+        ╞══════╪════════╡
+        │ 1    ┆ 0      │
+        └──────┴────────┘
+        """
+        if return_dtype is not None:
+            return_dtype = py_type_to_dtype(return_dtype)
+        return wrap_expr(self._pyexpr.map(f, return_dtype, agg_list))
+
+    def apply(
+        self,
+        f: Callable[[pli.Series], pli.Series] | Callable[[Any], Any],
+        return_dtype: type[DataType] | None = None,
+    ) -> Expr:
+        """
+        Apply a custom function in a GroupBy or Projection context.
+
+        Depending on the context it has the following behavior:
+
+        * Selection
+            Expects `f` to be of type Callable[[Any], Any].
+            Applies a python function over each individual value in the column.
+        * GroupBy
+            Expects `f` to be of type Callable[[Series], Series].
+            Applies a python function over each group.
+
+        Implementing logic using the ``.apply`` method is generally slower and more memory intensive
+        than implementing the same logic using the expression API because:
+
+        - with .apply the logic is implemented in Python but with an expression the logic is implemented in Rust
+        - with ``.apply`` the DataFrame is materialized in memory
+        - expressions can be parallelised
+
+        - expressions can be optimised
+
+        If possible, use the expression API for best performance.
+
+        Parameters
+        ----------
+        f
+            Lambda/ function to apply.
+        return_dtype
+            Dtype of the output Series.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "a": [1, 2, 3, 1],
         ...         "b": ["a", "b", "c", "c"],
         ...     }
         ... )
+
+        In a selection context, the function is applied by row.
+
+        >>> (
+        ...     df.with_column(
+        ...         pl.col("a").apply(lambda x: x * 2).alias("a_times_2"),
+        ...     )
+        ... )
+        shape: (4, 3)
+        ┌─────┬─────┬───────────┐
+        │ a   ┆ b   ┆ a_times_2 │
+        │ --- ┆ --- ┆ ---       │
+        │ i64 ┆ str ┆ i64       │
+        ╞═════╪═════╪═══════════╡
+        │ 1   ┆ a   ┆ 2         │
+        ├╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 2   ┆ b   ┆ 4         │
+        ├╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 3   ┆ c   ┆ 6         │
+        ├╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 1   ┆ c   ┆ 2         │
+        └─────┴─────┴───────────┘
+
+        It is better to implement this with an expression:
+
+        >>> (
+        ...     df.with_column(
+        ...         (pl.col("a") * 2).alias("a_times_2"),
+        ...     )
+        ... )  # doctest: +IGNORE_RESULT
+
+        In a GroupBy context the function is applied by group:
+
         >>> (
         ...     df.lazy()
         ...     .groupby("b", maintain_order=True)
@@ -1707,20 +2753,27 @@ class Expr:
         ├╌╌╌╌╌┼╌╌╌╌╌┤
         │ b   ┆ 2   │
         ├╌╌╌╌╌┼╌╌╌╌╌┤
-        │ c   ┆ 2   │
+        │ c   ┆ 4   │
         └─────┴─────┘
 
+        It is better to implement this with an expression:
+
+        >>> (
+        ...     df.groupby("b", maintain_order=True).agg(
+        ...         pl.col("a").sum(),
+        ...     )
+        ... )  # doctest: +IGNORE_RESULT
         """
 
         # input x: Series of type list containing the group values
-        def wrap_f(x: "pli.Series") -> "pli.Series":  # pragma: no cover
+        def wrap_f(x: pli.Series) -> pli.Series:  # pragma: no cover
             return x.apply(f, return_dtype=return_dtype)
 
         return self.map(wrap_f, agg_list=True)
 
-    def flatten(self) -> "Expr":
+    def flatten(self) -> Expr:
         """
-        Alias for explode.
+        Alias for :func:`explode`.
 
         Explode a list or utf8 Series. This means that every item is expanded to a new row.
 
@@ -1730,6 +2783,7 @@ class Expr:
 
         Examples
         --------
+        The following example turns each character into a separate row:
 
         >>> df = pl.DataFrame({"foo": ["hello", "world"]})
         >>> df.select(pl.col("foo").flatten())
@@ -1758,13 +2812,30 @@ class Expr:
         │ d   │
         └─────┘
 
+        This example turns each word into a separate row:
+
+        >>> df = pl.DataFrame({"foo": ["hello world"]})
+        >>> df.select(pl.col("foo").str.split(by=" ").flatten())
+        shape: (2, 1)
+        ┌───────┐
+        │ foo   │
+        │ ---   │
+        │ str   │
+        ╞═══════╡
+        │ hello │
+        ├╌╌╌╌╌╌╌┤
+        │ world │
+        └───────┘
+
         """
 
         return wrap_expr(self._pyexpr.explode())
 
-    def explode(self) -> "Expr":
+    def explode(self) -> Expr:
         """
-        Explode a list or utf8 Series. This means that every item is expanded to a new row.
+        Explode a list or utf8 Series.
+
+        This means that every item is expanded to a new row.
 
         Returns
         -------
@@ -1772,7 +2843,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"b": [[1, 2, 3], [4, 5, 6]]})
         >>> df.select(pl.col("b").explode())
         shape: (6, 1)
@@ -1797,13 +2867,12 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.explode())
 
-    def take_every(self, n: int) -> "Expr":
+    def take_every(self, n: int) -> Expr:
         """
         Take every nth value in the Series and return as a new Series.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [1, 2, 3, 4, 5, 6, 7, 8, 9]})
         >>> df.select(pl.col("foo").take_every(3))
         shape: (3, 1)
@@ -1822,7 +2891,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.take_every(n))
 
-    def head(self, n: Optional[Union[int, "Expr"]] = None) -> "Expr":
+    def head(self, n: int | Expr | None = None) -> Expr:
         """
         Take the first n values.
         """
@@ -1830,20 +2899,39 @@ class Expr:
             return self.slice(0, n)
         return wrap_expr(self._pyexpr.head(n))
 
-    def tail(self, n: Optional[int] = None) -> "Expr":
+    def tail(self, n: int | None = None) -> Expr:
         """
         Take the last n values.
         """
         return wrap_expr(self._pyexpr.tail(n))
 
-    def pow(self, exponent: Union[float, "Expr"]) -> "Expr":
+    def pow(self, exponent: int | float | pli.Series | Expr) -> Expr:
         """
         Raise expression to the power of exponent.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"foo": [1, 2, 3, 4]})
+        >>> df.select(pl.col("foo").pow(3))
+        shape: (4, 1)
+        ┌──────┐
+        │ foo  │
+        │ ---  │
+        │ f64  │
+        ╞══════╡
+        │ 1.0  │
+        ├╌╌╌╌╌╌┤
+        │ 8.0  │
+        ├╌╌╌╌╌╌┤
+        │ 27.0 │
+        ├╌╌╌╌╌╌┤
+        │ 64.0 │
+        └──────┘
         """
         exponent = expr_to_lit_or_expr(exponent)
         return wrap_expr(self._pyexpr.pow(exponent._pyexpr))
 
-    def is_in(self, other: Union["Expr", List[Any], str]) -> "Expr":
+    def is_in(self, other: Expr | List[Any] | str) -> Expr:
         """
         Check if elements of this Series are in the right Series, or List values of the right Series.
 
@@ -1882,7 +2970,7 @@ class Expr:
             other = expr_to_lit_or_expr(other, str_to_lit=False)
         return wrap_expr(self._pyexpr.is_in(other._pyexpr))
 
-    def repeat_by(self, by: Union["Expr", str]) -> "Expr":
+    def repeat_by(self, by: Expr | str) -> Expr:
         """
         Repeat the elements in this Series `n` times by dictated by the number given by `by`.
         The elements are expanded into a `List`
@@ -1899,7 +2987,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": ["x", "y", "z"],
@@ -1911,7 +2998,7 @@ class Expr:
         ┌─────────────────┐
         │ a               │
         │ ---             │
-        │ list [str]      │
+        │ list[str]       │
         ╞═════════════════╡
         │ ["x"]           │
         ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -1926,10 +3013,10 @@ class Expr:
 
     def is_between(
         self,
-        start: Union["Expr", datetime],
-        end: Union["Expr", datetime],
-        include_bounds: Union[bool, Sequence[bool]] = False,
-    ) -> "Expr":
+        start: Expr | datetime,
+        end: Expr | datetime,
+        include_bounds: bool | Sequence[bool] = False,
+    ) -> Expr:
         """
         Check if this expression is between start and end.
 
@@ -1953,7 +3040,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "num": [1, 2, 3, 4, 5],
@@ -2002,45 +3088,59 @@ class Expr:
                 "include_bounds should be a boolean or [boolean, boolean]."
             )
 
-    def hash(self, seed: int = 0, **kwargs: Any) -> "Expr":
+    def hash(
+        self,
+        seed: int = 0,
+        seed_1: int | None = None,
+        seed_2: int | None = None,
+        seed_3: int | None = None,
+    ) -> Expr:
         """
-        Hash the Series.
+        Hash the elements in the selection.
 
-        The hash value is of type `UInt64`
+        The hash value is of type `UInt64`.
 
         Parameters
         ----------
         seed
-            seed parameter
+            Random seed parameter. Defaults to 0.
+        seed_1
+            Random seed parameter. Defaults to `seed` if not set.
+        seed_2
+            Random seed parameter. Defaults to `seed` if not set.
+        seed_3
+            Random seed parameter. Defaults to `seed` if not set.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
-        ...         "a": [1, 2, 3],
+        ...         "a": [1, 2, None],
+        ...         "b": ["x", None, "z"],
         ...     }
         ... )
-        >>> df.with_column(pl.col("a").hash(0))
-        shape: (3, 1)
-        ┌─────────────────────┐
-        │ a                   │
-        │ ---                 │
-        │ u64                 │
-        ╞═════════════════════╡
-        │ 2818902862237899908 │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 1584708464793912000 │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 8337078092773689561 │
-        └─────────────────────┘
+        >>> df.with_column(pl.all().hash(10, 20, 30, 40))
+        shape: (3, 2)
+        ┌──────────────────────┬──────────────────────┐
+        │ a                    ┆ b                    │
+        │ ---                  ┆ ---                  │
+        │ u64                  ┆ u64                  │
+        ╞══════════════════════╪══════════════════════╡
+        │ 2461716855791224000  ┆ 16174362112783765148 │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 13569566217648818014 ┆ 11638928888656214026 │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 11638928888656214026 ┆ 6351727772611549480  │
+        └──────────────────────┴──────────────────────┘
 
         """
-        # kwargs is for backward compatibility
-        # can be removed later
-        return wrap_expr(self._pyexpr.hash(seed))
+        k0 = seed
+        k1 = seed_1 if seed_1 is not None else seed
+        k2 = seed_2 if seed_2 is not None else seed
+        k3 = seed_3 if seed_3 is not None else seed
+        return wrap_expr(self._pyexpr.hash(k0, k1, k2, k3))
 
-    def reinterpret(self, signed: bool) -> "Expr":
+    def reinterpret(self, signed: bool) -> Expr:
         """
         Reinterpret the underlying bits as a signed/unsigned integer.
         This operation is only allowed for 64bit integers. For lower bits integers,
@@ -2054,10 +3154,12 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.reinterpret(signed))
 
-    def inspect(self, fmt: str = "{}") -> "Expr":
+    def inspect(self, fmt: str = "{}") -> Expr:
         """
         Prints the value that this expression evaluates to and passes on the value.
 
+        Examples
+        --------
         >>> df = pl.DataFrame({"foo": [1, 1, 2]})
         >>> df.select(pl.col("foo").cumsum().inspect("value is: {}").alias("bar"))
         value is: shape: (3,)
@@ -2082,13 +3184,13 @@ class Expr:
 
         """
 
-        def inspect(s: "pli.Series") -> "pli.Series":  # pragma: no cover
+        def inspect(s: pli.Series) -> pli.Series:  # pragma: no cover
             print(fmt.format(s))
             return s
 
         return self.map(inspect, return_dtype=None, agg_list=True)
 
-    def interpolate(self) -> "Expr":
+    def interpolate(self) -> Expr:
         """
         Interpolate intermediate values. The interpolation method is linear.
         """
@@ -2096,13 +3198,13 @@ class Expr:
 
     def rolling_min(
         self,
-        window_size: Union[int, str],
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        window_size: int | str,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-        by: Optional[str] = None,
+        by: str | None = None,
         closed: str = "left",
-    ) -> "Expr":
+    ) -> Expr:
         """
         apply a rolling min (moving min) over the values in this array.
         A window of length `window_size` will traverse the array. The values that fill this window
@@ -2153,6 +3255,34 @@ class Expr:
             If you want to compute multiple aggregation statistics over the same dynamic window, consider using
             `groupby_rolling` this method can cache the window size computation.
 
+        Examples
+        --------
+        >>> df = pl.DataFrame({"A": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]})
+        >>> (
+        ...     df.select(
+        ...         [
+        ...             pl.col("A").rolling_min(window_size=2),
+        ...         ]
+        ...     )
+        ... )
+        shape: (6, 1)
+        ┌──────┐
+        │ A    │
+        │ ---  │
+        │ f64  │
+        ╞══════╡
+        │ null │
+        ├╌╌╌╌╌╌┤
+        │ 1.0  │
+        ├╌╌╌╌╌╌┤
+        │ 2.0  │
+        ├╌╌╌╌╌╌┤
+        │ 3.0  │
+        ├╌╌╌╌╌╌┤
+        │ 4.0  │
+        ├╌╌╌╌╌╌┤
+        │ 5.0  │
+        └──────┘
         """
         window_size, min_periods = _prepare_rolling_window_args(
             window_size, min_periods
@@ -2165,13 +3295,13 @@ class Expr:
 
     def rolling_max(
         self,
-        window_size: Union[int, str],
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        window_size: int | str,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-        by: Optional[str] = None,
+        by: str | None = None,
         closed: str = "left",
-    ) -> "Expr":
+    ) -> Expr:
         """
         Apply a rolling max (moving max) over the values in this array.
         A window of length `window_size` will traverse the array. The values that fill this window
@@ -2220,6 +3350,36 @@ class Expr:
         .. note::
             If you want to compute multiple aggregation statistics over the same dynamic window, consider using
             `groupby_rolling` this method can cache the window size computation.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"A": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]})
+        >>> (
+        ...     df.select(
+        ...         [
+        ...             pl.col("A").rolling_max(window_size=2),
+        ...         ]
+        ...     )
+        ... )
+        shape: (6, 1)
+        ┌──────┐
+        │ A    │
+        │ ---  │
+        │ f64  │
+        ╞══════╡
+        │ null │
+        ├╌╌╌╌╌╌┤
+        │ 2.0  │
+        ├╌╌╌╌╌╌┤
+        │ 3.0  │
+        ├╌╌╌╌╌╌┤
+        │ 4.0  │
+        ├╌╌╌╌╌╌┤
+        │ 5.0  │
+        ├╌╌╌╌╌╌┤
+        │ 6.0  │
+        └──────┘
+
         """
         window_size, min_periods = _prepare_rolling_window_args(
             window_size, min_periods
@@ -2232,13 +3392,13 @@ class Expr:
 
     def rolling_mean(
         self,
-        window_size: Union[int, str],
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        window_size: int | str,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-        by: Optional[str] = None,
+        by: str | None = None,
         closed: str = "left",
-    ) -> "Expr":
+    ) -> Expr:
         """
         Apply a rolling mean (moving mean) over the values in this array.
         A window of length `window_size` will traverse the array. The values that fill this window
@@ -2290,7 +3450,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"A": [1.0, 8.0, 6.0, 2.0, 16.0, 10.0]})
         >>> df.select(
         ...     [
@@ -2307,13 +3466,13 @@ class Expr:
         ├╌╌╌╌╌╌┤
         │ 4.5  │
         ├╌╌╌╌╌╌┤
-        │ 7    │
+        │ 7.0  │
         ├╌╌╌╌╌╌┤
-        │ 4    │
+        │ 4.0  │
         ├╌╌╌╌╌╌┤
-        │ 9    │
+        │ 9.0  │
         ├╌╌╌╌╌╌┤
-        │ 13   │
+        │ 13.0 │
         └──────┘
 
         """
@@ -2328,13 +3487,13 @@ class Expr:
 
     def rolling_sum(
         self,
-        window_size: Union[int, str],
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        window_size: int | str,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-        by: Optional[str] = None,
+        by: str | None = None,
         closed: str = "left",
-    ) -> "Expr":
+    ) -> Expr:
         """
         Apply a rolling sum (moving sum) over the values in this array.
         A window of length `window_size` will traverse the array. The values that fill this window
@@ -2384,6 +3543,35 @@ class Expr:
             If you want to compute multiple aggregation statistics over the same dynamic window, consider using
             `groupby_rolling` this method can cache the window size computation.
 
+        Examples
+        --------
+        >>> df = pl.DataFrame({"A": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]})
+        >>> (
+        ...     df.select(
+        ...         [
+        ...             pl.col("A").rolling_sum(window_size=2),
+        ...         ]
+        ...     )
+        ... )
+        shape: (6, 1)
+        ┌──────┐
+        │ A    │
+        │ ---  │
+        │ f64  │
+        ╞══════╡
+        │ null │
+        ├╌╌╌╌╌╌┤
+        │ 3.0  │
+        ├╌╌╌╌╌╌┤
+        │ 5.0  │
+        ├╌╌╌╌╌╌┤
+        │ 7.0  │
+        ├╌╌╌╌╌╌┤
+        │ 9.0  │
+        ├╌╌╌╌╌╌┤
+        │ 11.0 │
+        └──────┘
+
         """
         window_size, min_periods = _prepare_rolling_window_args(
             window_size, min_periods
@@ -2396,13 +3584,13 @@ class Expr:
 
     def rolling_std(
         self,
-        window_size: Union[int, str],
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        window_size: int | str,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-        by: Optional[str] = None,
+        by: str | None = None,
         closed: str = "left",
-    ) -> "Expr":
+    ) -> Expr:
         """
         Compute a rolling std dev
 
@@ -2465,13 +3653,13 @@ class Expr:
 
     def rolling_var(
         self,
-        window_size: Union[int, str],
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        window_size: int | str,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-        by: Optional[str] = None,
+        by: str | None = None,
         closed: str = "left",
-    ) -> "Expr":
+    ) -> Expr:
         """
         Compute a rolling variance.
 
@@ -2534,13 +3722,13 @@ class Expr:
 
     def rolling_median(
         self,
-        window_size: Union[int, str],
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        window_size: int | str,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-        by: Optional[str] = None,
+        by: str | None = None,
         closed: str = "left",
-    ) -> "Expr":
+    ) -> Expr:
         """
         Compute a rolling median
 
@@ -2601,13 +3789,13 @@ class Expr:
         self,
         quantile: float,
         interpolation: str = "nearest",
-        window_size: Union[int, str] = 2,
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        window_size: int | str = 2,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-        by: Optional[str] = None,
+        by: str | None = None,
         closed: str = "left",
-    ) -> "Expr":
+    ) -> Expr:
         """
         Compute a rolling quantile
 
@@ -2677,12 +3865,12 @@ class Expr:
 
     def rolling_apply(
         self,
-        function: Callable[["pli.Series"], Any],
+        function: Callable[[pli.Series], Any],
         window_size: int,
-        weights: Optional[List[float]] = None,
-        min_periods: Optional[int] = None,
+        weights: List[float] | None = None,
+        min_periods: int | None = None,
         center: bool = False,
-    ) -> "Expr":
+    ) -> Expr:
         """
         Allows a custom rolling window function.
         Prefer the specific rolling window functions over this one, as they are faster.
@@ -2711,7 +3899,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "A": [1.0, 2.0, 9.0, 2.0, 13.0],
@@ -2722,22 +3909,22 @@ class Expr:
         ...         pl.col("A").rolling_apply(lambda s: s.std(), window_size=3),
         ...     ]
         ... )
-        shape: (5, 1)
-        ┌────────────────────┐
-        │ A                  │
-        │ ---                │
-        │ f64                │
-        ╞════════════════════╡
-        │ null               │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ null               │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 4.358898943540674  │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 4.041451884327381  │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ 5.5677643628300215 │
-        └────────────────────┘
+         shape: (5, 1)
+        ┌──────────┐
+        │ A        │
+        │ ---      │
+        │ f64      │
+        ╞══════════╡
+        │ null     │
+        ├╌╌╌╌╌╌╌╌╌╌┤
+        │ null     │
+        ├╌╌╌╌╌╌╌╌╌╌┤
+        │ 4.358899 │
+        ├╌╌╌╌╌╌╌╌╌╌┤
+        │ 4.041452 │
+        ├╌╌╌╌╌╌╌╌╌╌┤
+        │ 5.567764 │
+        └──────────┘
 
         """
         if min_periods is None:
@@ -2748,7 +3935,7 @@ class Expr:
             )
         )
 
-    def rolling_skew(self, window_size: int, bias: bool = True) -> "Expr":
+    def rolling_skew(self, window_size: int, bias: bool = True) -> Expr:
         """
         Compute a rolling skew
 
@@ -2761,19 +3948,19 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.rolling_skew(window_size, bias))
 
-    def abs(self) -> "Expr":
+    def abs(self) -> Expr:
         """
         Take absolute values
         """
         return wrap_expr(self._pyexpr.abs())
 
-    def argsort(self, reverse: bool = False) -> "Expr":
+    def argsort(self, reverse: bool = False) -> Expr:
         """
         alias for `arg_sort`
         """
         return self.arg_sort(reverse)
 
-    def rank(self, method: str = "average", reverse: bool = False) -> "Expr":
+    def rank(self, method: str = "average", reverse: bool = False) -> Expr:
         """
         Assign ranks to data, dealing with ties appropriately.
 
@@ -2798,11 +3985,10 @@ class Expr:
             - 'random': Like 'ordinal', but the rank for ties is not dependent
             on the order that the values occur in `a`.
         reverse
-            reverse the operation
+            Reverse the operation.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [0, 1, 2, 2, 4]})
         >>> df.select(pl.col("a").rank())
         shape: (5, 1)
@@ -2825,7 +4011,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.rank(method, reverse))
 
-    def diff(self, n: int = 1, null_behavior: str = "ignore") -> "Expr":
+    def diff(self, n: int = 1, null_behavior: str = "ignore") -> Expr:
         """
         Calculate the n-th discrete difference.
 
@@ -2838,7 +4024,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [20, 10, 30],
@@ -2861,7 +4046,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.diff(n, null_behavior))
 
-    def pct_change(self, n: int = 1) -> "Expr":
+    def pct_change(self, n: int = 1) -> Expr:
         """
         Percentage change (as fraction) between current element and most-recent
         non-null element at least n period(s) before the current element.
@@ -2875,7 +4060,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [10, 11, 12, None, 12],
@@ -2902,7 +4086,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.pct_change(n))
 
-    def skew(self, bias: bool = True) -> "Expr":
+    def skew(self, bias: bool = True) -> Expr:
         r"""Compute the sample skewness of a data set.
         For normally distributed data, the skewness should be about zero. For
         unimodal continuous distributions, a skewness value greater than zero means
@@ -2940,7 +4124,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.skew(bias))
 
-    def kurtosis(self, fisher: bool = True, bias: bool = True) -> "Expr":
+    def kurtosis(self, fisher: bool = True, bias: bool = True) -> Expr:
         """Compute the kurtosis (Fisher or Pearson) of a dataset.
         Kurtosis is the fourth central moment divided by the square of the
         variance. If Fisher's definition is used, then 3.0 is subtracted from
@@ -2960,13 +4144,14 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.kurtosis(fisher, bias))
 
-    def clip(self, min_val: Union[int, float], max_val: Union[int, float]) -> "Expr":
+    def clip(self, min_val: int | float, max_val: int | float) -> Expr:
         """
         Clip (limit) the values in an array to any value that fits in 64 floating point range.
 
         Only works for the following dtypes: {Int32, Int64, Float32, Float64, UInt32}.
 
-        If you want to clip other dtypes, consider writing a when -> then -> otherwise expression
+        If you want to clip other dtypes, consider writing a "when, then, otherwise" expression.
+        See :func:`when` for more information.
 
         Parameters
         ----------
@@ -2974,28 +4159,47 @@ class Expr:
             Minimum value.
         max_val
             Maximum value.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"foo": [-50, 5, None, 50]})
+        >>> df.with_column(pl.col("foo").clip(1, 10).alias("foo_clipped"))
+        shape: (4, 2)
+        ┌──────┬─────────────┐
+        │ foo  ┆ foo_clipped │
+        │ ---  ┆ ---         │
+        │ i64  ┆ i64         │
+        ╞══════╪═════════════╡
+        │ -50  ┆ 1           │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 5    ┆ 5           │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null ┆ null        │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ 50   ┆ 10          │
+        └──────┴─────────────┘
+
         """
         return wrap_expr(self._pyexpr.clip(min_val, max_val))
 
-    def lower_bound(self) -> "Expr":
+    def lower_bound(self) -> Expr:
         """
         Returns a unit Series with the lowest value possible for the dtype of this expression.
         """
         return wrap_expr(self._pyexpr.lower_bound())
 
-    def upper_bound(self) -> "Expr":
+    def upper_bound(self) -> Expr:
         """
         Returns a unit Series with the highest value possible for the dtype of this expression.
         """
         return wrap_expr(self._pyexpr.upper_bound())
 
-    def sign(self) -> "Expr":
+    def sign(self) -> Expr:
         """
         Returns an element-wise indication of the sign of a number.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [-9, -8, 0, 4]})
         >>> df.select(pl.col("foo").sign())
         shape: (4, 1)
@@ -3014,11 +4218,13 @@ class Expr:
         └─────┘
 
         """
-        return np.sign(self)  # type: ignore
+        if not _NUMPY_AVAILABLE:
+            raise ImportError("'numpy' is required for this functionality.")
+        return np.sign(self)  # type: ignore[call-overload]
 
-    def sin(self) -> "Expr":
+    def sin(self) -> Expr:
         """
-        Compute the element-wise value for Trigonometric sine on an array
+        Compute the element-wise value for the sine.
 
         Returns
         -------
@@ -3026,7 +4232,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [0.0]})
         >>> df.select(pl.col("a").sin())
         shape: (1, 1)
@@ -3039,11 +4244,11 @@ class Expr:
         └─────┘
 
         """
-        return np.sin(self)  # type: ignore
+        return wrap_expr(self._pyexpr.sin())
 
-    def cos(self) -> "Expr":
+    def cos(self) -> Expr:
         """
-        Compute the element-wise value for Trigonometric cosine on an array
+        Compute the element-wise value for the cosine.
 
         Returns
         -------
@@ -3051,7 +4256,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [0.0]})
         >>> df.select(pl.col("a").cos())
         shape: (1, 1)
@@ -3060,15 +4264,15 @@ class Expr:
         │ --- │
         │ f64 │
         ╞═════╡
-        │ 1   │
+        │ 1.0 │
         └─────┘
 
         """
-        return np.cos(self)  # type: ignore
+        return wrap_expr(self._pyexpr.cos())
 
-    def tan(self) -> "Expr":
+    def tan(self) -> Expr:
         """
-        Compute the element-wise value for Trigonometric tangent on an array
+        Compute the element-wise value for the tangent.
 
         Returns
         -------
@@ -3076,7 +4280,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [1.0]})
         >>> df.select(pl.col("a").tan().round(2))
         shape: (1, 1)
@@ -3089,11 +4292,11 @@ class Expr:
         └──────┘
 
         """
-        return np.tan(self)  # type: ignore
+        return wrap_expr(self._pyexpr.tan())
 
-    def arcsin(self) -> "Expr":
+    def arcsin(self) -> Expr:
         """
-        Compute the element-wise value for Trigonometric sine on an array
+        Compute the element-wise value for the inverse sine.
 
         Returns
         -------
@@ -3104,20 +4307,20 @@ class Expr:
         >>> df = pl.DataFrame({"a": [1.0]})
         >>> df.select(pl.col("a").arcsin())
         shape: (1, 1)
-        ┌────────────────────┐
-        │ a                  │
-        │ ---                │
-        │ f64                │
-        ╞════════════════════╡
-        │ 1.5707963267948966 │
-        └────────────────────┘
+        ┌──────────┐
+        │ a        │
+        │ ---      │
+        │ f64      │
+        ╞══════════╡
+        │ 1.570796 │
+        └──────────┘
 
         """
-        return np.arcsin(self)  # type: ignore
+        return wrap_expr(self._pyexpr.arcsin())
 
-    def arccos(self) -> "Expr":
+    def arccos(self) -> Expr:
         """
-        Compute the element-wise value for Trigonometric cosine on an array
+        Compute the element-wise value for the inverse cosine.
 
         Returns
         -------
@@ -3128,20 +4331,20 @@ class Expr:
         >>> df = pl.DataFrame({"a": [0.0]})
         >>> df.select(pl.col("a").arccos())
         shape: (1, 1)
-        ┌────────────────────┐
-        │ a                  │
-        │ ---                │
-        │ f64                │
-        ╞════════════════════╡
-        │ 1.5707963267948966 │
-        └────────────────────┘
+        ┌──────────┐
+        │ a        │
+        │ ---      │
+        │ f64      │
+        ╞══════════╡
+        │ 1.570796 │
+        └──────────┘
 
         """
-        return np.arccos(self)  # type: ignore
+        return wrap_expr(self._pyexpr.arccos())
 
-    def arctan(self) -> "Expr":
+    def arctan(self) -> Expr:
         """
-        Compute the element-wise value for Trigonometric tangent on an array
+        Compute the element-wise value for the inverse tangent.
 
         Returns
         -------
@@ -3152,18 +4355,162 @@ class Expr:
         >>> df = pl.DataFrame({"a": [1.0]})
         >>> df.select(pl.col("a").arctan())
         shape: (1, 1)
-        ┌────────────────────┐
-        │ a                  │
-        │ ---                │
-        │ f64                │
-        ╞════════════════════╡
-        │ 0.7853981633974483 │
-        └────────────────────┘
+        ┌──────────┐
+        │ a        │
+        │ ---      │
+        │ f64      │
+        ╞══════════╡
+        │ 0.785398 │
+        └──────────┘
 
         """
-        return np.arctan(self)  # type: ignore
+        return wrap_expr(self._pyexpr.arctan())
 
-    def reshape(self, dims: Tuple[int, ...]) -> "Expr":
+    def sinh(self) -> Expr:
+        """
+        Compute the element-wise value for the hyperbolic sine.
+
+        Returns
+        -------
+        Series of dtype Float64
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1.0]})
+        >>> df.select(pl.col("a").sinh())
+        shape: (1, 1)
+        ┌──────────┐
+        │ a        │
+        │ ---      │
+        │ f64      │
+        ╞══════════╡
+        │ 1.175201 │
+        └──────────┘
+
+        """
+        return wrap_expr(self._pyexpr.sinh())
+
+    def cosh(self) -> Expr:
+        """
+        Compute the element-wise value for the hyperbolic cosine.
+
+        Returns
+        -------
+        Series of dtype Float64
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1.0]})
+        >>> df.select(pl.col("a").cosh())
+        shape: (1, 1)
+        ┌──────────┐
+        │ a        │
+        │ ---      │
+        │ f64      │
+        ╞══════════╡
+        │ 1.543081 │
+        └──────────┘
+
+        """
+        return wrap_expr(self._pyexpr.cosh())
+
+    def tanh(self) -> Expr:
+        """
+        Compute the element-wise value for the hyperbolic tangent.
+
+        Returns
+        -------
+        Series of dtype Float64
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1.0]})
+        >>> df.select(pl.col("a").tanh())
+        shape: (1, 1)
+        ┌──────────┐
+        │ a        │
+        │ ---      │
+        │ f64      │
+        ╞══════════╡
+        │ 0.761594 │
+        └──────────┘
+
+        """
+        return wrap_expr(self._pyexpr.tanh())
+
+    def arcsinh(self) -> Expr:
+        """
+        Compute the element-wise value for the inverse hyperbolic sine.
+
+        Returns
+        -------
+        Series of dtype Float64
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1.0]})
+        >>> df.select(pl.col("a").arcsinh())
+        shape: (1, 1)
+        ┌──────────┐
+        │ a        │
+        │ ---      │
+        │ f64      │
+        ╞══════════╡
+        │ 0.881374 │
+        └──────────┘
+
+        """
+        return wrap_expr(self._pyexpr.arcsinh())
+
+    def arccosh(self) -> Expr:
+        """
+        Compute the element-wise value for the inverse hyperbolic cosine.
+
+        Returns
+        -------
+        Series of dtype Float64
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1.0]})
+        >>> df.select(pl.col("a").arccosh())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ 0.0 │
+        └─────┘
+
+        """
+        return wrap_expr(self._pyexpr.arccosh())
+
+    def arctanh(self) -> Expr:
+        """
+        Compute the element-wise value for the inverse hyperbolic tangent.
+
+        Returns
+        -------
+        Series of dtype Float64
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": [1.0]})
+        >>> df.select(pl.col("a").arctanh())
+        shape: (1, 1)
+        ┌─────┐
+        │ a   │
+        │ --- │
+        │ f64 │
+        ╞═════╡
+        │ inf │
+        └─────┘
+
+        """
+        return wrap_expr(self._pyexpr.arctanh())
+
+    def reshape(self, dims: tuple[int, ...]) -> Expr:
         """
         Reshape this Expr to a flat series, shape: (len,)
         or a List series, shape: (rows, cols)
@@ -3181,7 +4528,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [1, 2, 3, 4, 5, 6, 7, 8, 9]})
         >>> df.select(pl.col("foo").reshape((3, 3)))
         shape: (3, 1)
@@ -3200,17 +4546,18 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.reshape(dims))
 
-    def shuffle(self, seed: Optional[int] = None) -> "Expr":
+    def shuffle(self, seed: int | None = None) -> Expr:
         """
         Shuffle the contents of this expr.
 
         Parameters
         ----------
         seed
-            Seed initialization. If None given numpy is used.
+            Seed initialization. If None given, the `random` module is used to generate
+            a random seed.
         """
         if seed is None:
-            seed = int(np.random.randint(0, 10000))
+            seed = random.randint(0, 10000)
         return wrap_expr(self._pyexpr.shuffle(seed))
 
     def sample(
@@ -3218,8 +4565,8 @@ class Expr:
         fraction: float = 1.0,
         with_replacement: bool = True,
         shuffle: bool = False,
-        seed: Optional[int] = None,
-    ) -> "Expr":
+        seed: int | None = None,
+    ) -> Expr:
         """
         Sample a fraction of the `Series`.
 
@@ -3240,13 +4587,13 @@ class Expr:
 
     def ewm_mean(
         self,
-        com: Optional[float] = None,
-        span: Optional[float] = None,
-        half_life: Optional[float] = None,
-        alpha: Optional[float] = None,
+        com: float | None = None,
+        span: float | None = None,
+        half_life: float | None = None,
+        alpha: float | None = None,
         adjust: bool = True,
         min_periods: int = 1,
-    ) -> "Expr":
+    ) -> Expr:
         r"""
         Exponential moving average.
 
@@ -3274,13 +4621,13 @@ class Expr:
 
     def ewm_std(
         self,
-        com: Optional[float] = None,
-        span: Optional[float] = None,
-        half_life: Optional[float] = None,
-        alpha: Optional[float] = None,
+        com: float | None = None,
+        span: float | None = None,
+        half_life: float | None = None,
+        alpha: float | None = None,
         adjust: bool = True,
         min_periods: int = 1,
-    ) -> "Expr":
+    ) -> Expr:
         r"""
         Exponential moving standard deviation.
 
@@ -3308,13 +4655,13 @@ class Expr:
 
     def ewm_var(
         self,
-        com: Optional[float] = None,
-        span: Optional[float] = None,
-        half_life: Optional[float] = None,
-        alpha: Optional[float] = None,
+        com: float | None = None,
+        span: float | None = None,
+        half_life: float | None = None,
+        alpha: float | None = None,
         adjust: bool = True,
         min_periods: int = 1,
-    ) -> "Expr":
+    ) -> Expr:
         r"""
         Exponential moving standard deviation.
 
@@ -3340,9 +4687,7 @@ class Expr:
         alpha = _prepare_alpha(com, span, half_life, alpha)
         return wrap_expr(self._pyexpr.ewm_var(alpha, adjust, min_periods))
 
-    def extend_constant(
-        self, value: Optional[Union[int, float, str, bool]], n: int
-    ) -> "Expr":
+    def extend_constant(self, value: int | float | str | bool | None, n: int) -> Expr:
         """
         Extend the Series with given number of values.
 
@@ -3355,7 +4700,6 @@ class Expr:
 
         Examples
         --------
-
         >>> s = pl.Series([1, 2, 3])
         >>> s.extend_constant(99, n=2)
         shape: (5,)
@@ -3371,7 +4715,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.extend_constant(value, n))
 
-    def value_counts(self, multithreaded: bool = False) -> "Expr":
+    def value_counts(self, multithreaded: bool = False) -> Expr:
         """
         Count all unique values and create a struct mapping value to count
 
@@ -3386,7 +4730,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "id": ["a", "b", "b", "c", "c", "c"],
@@ -3398,22 +4741,22 @@ class Expr:
         ...     ]
         ... )
         shape: (3, 1)
-        ┌─────────────────────────────────────┐
-        │ id                                  │
-        │ ---                                 │
-        │ struct[2]{'id': str, 'counts': u32} │
-        ╞═════════════════════════════════════╡
-        │ {"c",3}                             │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ {"b",2}                             │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ {"a",1}                             │
-        └─────────────────────────────────────┘
+        ┌───────────┐
+        │ id        │
+        │ ---       │
+        │ struct[2] │
+        ╞═══════════╡
+        │ {"c",3}   │
+        ├╌╌╌╌╌╌╌╌╌╌╌┤
+        │ {"b",2}   │
+        ├╌╌╌╌╌╌╌╌╌╌╌┤
+        │ {"a",1}   │
+        └───────────┘
 
         """
         return wrap_expr(self._pyexpr.value_counts(multithreaded))
 
-    def unique_counts(self) -> "Expr":
+    def unique_counts(self) -> Expr:
         """
         Returns a count of the unique values in the order of appearance.
 
@@ -3422,7 +4765,6 @@ class Expr:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "id": ["a", "b", "b", "c", "c", "c"],
@@ -3449,7 +4791,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.unique_counts())
 
-    def log(self, base: float = math.e) -> "Expr":
+    def log(self, base: float = math.e) -> Expr:
         """
         Compute the logarithm to a given base
 
@@ -3460,7 +4802,7 @@ class Expr:
         """
         return wrap_expr(self._pyexpr.log(base))
 
-    def entropy(self, base: float = math.e, normalize: bool = True) -> "Expr":
+    def entropy(self, base: float = math.e, normalize: bool = True) -> Expr:
         """
         Compute the entropy as `-sum(pk * log(pk)`.
         where `pk` are discrete probabilities.
@@ -3476,8 +4818,8 @@ class Expr:
         return wrap_expr(self._pyexpr.entropy(base, normalize))
 
     def cumulative_eval(
-        self, expr: "Expr", min_periods: int = 1, parallel: bool = False
-    ) -> "Expr":
+        self, expr: Expr, min_periods: int = 1, parallel: bool = False
+    ) -> Expr:
         """
         Run an expression over a sliding window that increases `1` slot every iteration.
 
@@ -3530,7 +4872,7 @@ class Expr:
             self._pyexpr.cumulative_eval(expr._pyexpr, min_periods, parallel)
         )
 
-    def set_sorted(self, reverse: bool = False) -> "Expr":
+    def set_sorted(self, reverse: bool = False) -> Expr:
         """
         Set this `Series` as `sorted` so that downstream code can use
         fast paths for sorted arrays.
@@ -3550,35 +4892,35 @@ class Expr:
     # the type annotation `str` with the namespace "str"
 
     @property
-    def dt(self) -> "ExprDateTimeNameSpace":
+    def dt(self) -> ExprDateTimeNameSpace:
         """
         Create an object namespace of all datetime related methods.
         """
         return ExprDateTimeNameSpace(self)
 
     @property
-    def str(self) -> "ExprStringNameSpace":
+    def str(self) -> ExprStringNameSpace:
         """
         Create an object namespace of all string related methods.
         """
         return ExprStringNameSpace(self)
 
     @property
-    def arr(self) -> "ExprListNameSpace":
+    def arr(self) -> ExprListNameSpace:
         """
         Create an object namespace of all list related methods.
         """
         return ExprListNameSpace(self)
 
     @property
-    def cat(self) -> "ExprCatNameSpace":
+    def cat(self) -> ExprCatNameSpace:
         """
         Create an object namespace of all categorical related methods.
         """
         return ExprCatNameSpace(self)
 
     @property
-    def struct(self) -> "ExprStructNameSpace":
+    def struct(self) -> ExprStructNameSpace:
         """
         Create an object namespace of all struct related methods.
         """
@@ -3604,7 +4946,6 @@ class ExprStructNameSpace:
 
         Examples
         --------
-
         >>> df = (
         ...     pl.DataFrame(
         ...         {
@@ -3643,7 +4984,6 @@ class ExprStructNameSpace:
 
         Examples
         --------
-
         >>> df = (
         ...     pl.DataFrame(
         ...         {
@@ -3659,9 +4999,11 @@ class ExprStructNameSpace:
         >>> df = df.with_column(
         ...     pl.col("my_struct").struct.rename_fields(["INT", "STR", "BOOL", "LIST"])
         ... )
-        # does NOT work anymore:
+
+        Does NOT work anymore:
         # df.select(pl.col("my_struct").struct.field("int"))
         #               PanicException: int not found ^^^
+
         >>> df.select(pl.col("my_struct").struct.field("INT"))
         shape: (2, 1)
         ┌─────┐
@@ -3692,7 +5034,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [1, 2], "bar": [["a", "b"], ["c"]]})
         >>> df.select(pl.col("bar").arr.lengths())
         shape: (2, 1)
@@ -3709,37 +5050,36 @@ class ExprListNameSpace:
         """
         return wrap_expr(self._pyexpr.arr_lengths())
 
-    def sum(self) -> "Expr":
+    def sum(self) -> Expr:
         """
         Sum all the arrays in the list
         """
         return wrap_expr(self._pyexpr.lst_sum())
 
-    def max(self) -> "Expr":
+    def max(self) -> Expr:
         """
         Compute the max value of the arrays in the list
         """
         return wrap_expr(self._pyexpr.lst_max())
 
-    def min(self) -> "Expr":
+    def min(self) -> Expr:
         """
         Compute the min value of the arrays in the list
         """
         return wrap_expr(self._pyexpr.lst_min())
 
-    def mean(self) -> "Expr":
+    def mean(self) -> Expr:
         """
         Compute the mean value of the arrays in the list
         """
         return wrap_expr(self._pyexpr.lst_mean())
 
-    def sort(self, reverse: bool = False) -> "Expr":
+    def sort(self, reverse: bool = False) -> Expr:
         """
         Sort the arrays in the list
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [[3, 2, 1], [9, 1, 2]],
@@ -3747,26 +5087,25 @@ class ExprListNameSpace:
         ... )
         >>> df.select(pl.col("a").arr.sort())
         shape: (2, 1)
-        ┌────────────┐
-        │ a          │
-        │ ---        │
-        │ list [i64] │
-        ╞════════════╡
-        │ [1, 2, 3]  │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ [1, 2, 9]  │
-        └────────────┘
+        ┌───────────┐
+        │ a         │
+        │ ---       │
+        │ list[i64] │
+        ╞═══════════╡
+        │ [1, 2, 3] │
+        ├╌╌╌╌╌╌╌╌╌╌╌┤
+        │ [1, 2, 9] │
+        └───────────┘
 
         """
         return wrap_expr(self._pyexpr.lst_sort(reverse))
 
-    def reverse(self) -> "Expr":
+    def reverse(self) -> Expr:
         """
         Reverse the arrays in the list
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [[3, 2, 1], [9, 1, 2]],
@@ -3774,28 +5113,28 @@ class ExprListNameSpace:
         ... )
         >>> df.select(pl.col("a").arr.reverse())
         shape: (2, 1)
-        ┌────────────┐
-        │ a          │
-        │ ---        │
-        │ list [i64] │
-        ╞════════════╡
-        │ [1, 2, 3]  │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ [2, 1, 9]  │
-        └────────────┘
+        ┌───────────┐
+        │ a         │
+        │ ---       │
+        │ list[i64] │
+        ╞═══════════╡
+        │ [1, 2, 3] │
+        ├╌╌╌╌╌╌╌╌╌╌╌┤
+        │ [2, 1, 9] │
+        └───────────┘
 
         """
         return wrap_expr(self._pyexpr.lst_reverse())
 
-    def unique(self) -> "Expr":
+    def unique(self) -> Expr:
         """
         Get the unique/distinct values in the list
         """
         return wrap_expr(self._pyexpr.lst_unique())
 
     def concat(
-        self, other: Union[List[Union[Expr, str]], Expr, str, "pli.Series", List[Any]]
-    ) -> "Expr":
+        self, other: List[Expr | str] | Expr | str | pli.Series | List[Any]
+    ) -> Expr:
         """
         Concat the arrays in a Series dtype List in linear time.
 
@@ -3806,7 +5145,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [["a"], ["x"]],
@@ -3818,7 +5156,7 @@ class ExprListNameSpace:
         ┌─────────────────┐
         │ a               │
         │ ---             │
-        │ list [str]      │
+        │ list[str]       │
         ╞═════════════════╡
         │ ["a", "b", "c"] │
         ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -3831,16 +5169,16 @@ class ExprListNameSpace:
         ):
             return self.concat(pli.Series([other]))
 
-        other_list: List[Union[Expr, str, "pli.Series"]]
+        other_list: List[Expr | str | pli.Series]
         if not isinstance(other, list):
             other_list = [other]
         else:
-            other_list = copy.copy(other)  # type: ignore
+            other_list = copy.copy(other)  # type: ignore[arg-type]
 
         other_list.insert(0, wrap_expr(self._pyexpr))
         return pli.concat_list(other_list)
 
-    def get(self, index: int) -> "Expr":
+    def get(self, index: int) -> Expr:
         """
         Get the value by index in the sublists.
         So index `0` would return the first item of every sublist
@@ -3854,7 +5192,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [[3, 2, 1], [], [1, 2]]})
         >>> df.select(pl.col("foo").arr.get(0))
         shape: (3, 1)
@@ -3873,13 +5210,12 @@ class ExprListNameSpace:
         """
         return wrap_expr(self._pyexpr.lst_get(index))
 
-    def first(self) -> "Expr":
+    def first(self) -> Expr:
         """
         Get the first value of the sublists.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [[3, 2, 1], [], [1, 2]]})
         >>> df.select(pl.col("foo").arr.first())
         shape: (3, 1)
@@ -3898,13 +5234,12 @@ class ExprListNameSpace:
         """
         return self.get(0)
 
-    def last(self) -> "Expr":
+    def last(self) -> Expr:
         """
         Get the last value of the sublists.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [[3, 2, 1], [], [1, 2]]})
         >>> df.select(pl.col("foo").arr.last())
         shape: (3, 1)
@@ -3923,7 +5258,7 @@ class ExprListNameSpace:
         """
         return self.get(-1)
 
-    def contains(self, item: Union[float, str, bool, int, date, datetime]) -> "Expr":
+    def contains(self, item: float | str | bool | int | date | datetime) -> Expr:
         """
         Check if sublists contain the given item.
 
@@ -3938,7 +5273,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [[3, 2, 1], [], [1, 2]]})
         >>> df.select(pl.col("foo").arr.contains(1))
         shape: (3, 1)
@@ -3955,9 +5289,9 @@ class ExprListNameSpace:
         └───────┘
 
         """
-        return wrap_expr(self._pyexpr).map(lambda s: s.arr.contains(item))
+        return wrap_expr(self._pyexpr).map(lambda s: s.arr.contains(item), Boolean)
 
-    def join(self, separator: str) -> "Expr":
+    def join(self, separator: str) -> Expr:
         """
         Join all string items in a sublist and place a separator between them.
         This errors if inner type of list `!= Utf8`.
@@ -3973,7 +5307,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"s": [["a", "b", "c"], ["x", "y"]]})
         >>> df.select(pl.col("s").arr.join(" "))
         shape: (2, 1)
@@ -3991,7 +5324,7 @@ class ExprListNameSpace:
 
         return wrap_expr(self._pyexpr.lst_join(separator))
 
-    def arg_min(self) -> "Expr":
+    def arg_min(self) -> Expr:
         """
         Retrieve the index of the minimal value in every sublist
 
@@ -4001,7 +5334,7 @@ class ExprListNameSpace:
         """
         return wrap_expr(self._pyexpr.lst_arg_min())
 
-    def arg_max(self) -> "Expr":
+    def arg_max(self) -> Expr:
         """
         Retrieve the index of the maximum value in every sublist
 
@@ -4011,7 +5344,7 @@ class ExprListNameSpace:
         """
         return wrap_expr(self._pyexpr.lst_arg_max())
 
-    def diff(self, n: int = 1, null_behavior: str = "ignore") -> "Expr":
+    def diff(self, n: int = 1, null_behavior: str = "ignore") -> Expr:
         """
         Calculate the n-th discrete difference of every sublist.
 
@@ -4024,7 +5357,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> s = pl.Series("a", [[1, 2, 3, 4], [10, 2, 1]])
         >>> s.arr.diff()
         shape: (2,)
@@ -4037,7 +5369,7 @@ class ExprListNameSpace:
         """
         return wrap_expr(self._pyexpr.lst_diff(n, null_behavior))
 
-    def shift(self, periods: int = 1) -> "Expr":
+    def shift(self, periods: int = 1) -> Expr:
         """
         Shift the values by a given period and fill the parts that will be empty due to this operation
         with nulls.
@@ -4049,7 +5381,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> s = pl.Series("a", [[1, 2, 3, 4], [10, 2, 1]])
         >>> s.arr.shift()
         shape: (2,)
@@ -4062,20 +5393,19 @@ class ExprListNameSpace:
         """
         return wrap_expr(self._pyexpr.lst_shift(periods))
 
-    def slice(self, offset: int, length: int) -> "Expr":
+    def slice(self, offset: int, length: int) -> Expr:
         """
         Slice every sublist
 
         Parameters
         ----------
         offset
-            Take the values from this index offset
+            Take the values from this index offset.
         length
-            The length of the slice to take
+            The length of the slice to take.
 
         Examples
         --------
-
         >>> s = pl.Series("a", [[1, 2, 3, 4], [10, 2, 1]])
         >>> s.arr.slice(1, 2)
         shape: (2,)
@@ -4088,7 +5418,7 @@ class ExprListNameSpace:
         """
         return wrap_expr(self._pyexpr.lst_slice(offset, length))
 
-    def head(self, n: int = 5) -> "Expr":
+    def head(self, n: int = 5) -> Expr:
         """
         Slice the head of every sublist
 
@@ -4099,7 +5429,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> s = pl.Series("a", [[1, 2, 3, 4], [10, 2, 1]])
         >>> s.arr.head(2)
         shape: (2,)
@@ -4112,7 +5441,7 @@ class ExprListNameSpace:
         """
         return self.slice(0, n)
 
-    def tail(self, n: int = 5) -> "Expr":
+    def tail(self, n: int = 5) -> Expr:
         """
         Slice the tail of every sublist
 
@@ -4123,7 +5452,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> s = pl.Series("a", [[1, 2, 3, 4], [10, 2, 1]])
         >>> s.arr.tail(2)
         shape: (2,)
@@ -4139,8 +5467,8 @@ class ExprListNameSpace:
     def to_struct(
         self,
         n_field_strategy: str = "first_non_null",
-        name_generator: Optional[Callable[[int], str]] = None,
-    ) -> "Expr":
+        name_generator: Callable[[int], str] | None = None,
+    ) -> Expr:
         """
         Convert the series of type `List` to a series of type `Struct`.
 
@@ -4155,7 +5483,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [[1, 2, 3], [1, 2]]})
         >>> df.select([pl.col("a").arr.to_struct()])
         shape: (2, 1)
@@ -4182,7 +5509,7 @@ class ExprListNameSpace:
 
         return wrap_expr(self._pyexpr.lst_to_struct(n_field_strategy, name_generator))
 
-    def eval(self, expr: "Expr", parallel: bool = False) -> "Expr":
+    def eval(self, expr: Expr, parallel: bool = False) -> Expr:
         """
         Run any polars expression against the lists' elements
 
@@ -4198,7 +5525,6 @@ class ExprListNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"a": [1, 8, 3], "b": [4, 5, 2]})
         >>> df.with_column(
         ...     pl.concat_list(["a", "b"]).arr.eval(pl.element().rank()).alias("rank")
@@ -4207,7 +5533,7 @@ class ExprListNameSpace:
         ┌─────┬─────┬────────────┐
         │ a   ┆ b   ┆ rank       │
         │ --- ┆ --- ┆ ---        │
-        │ i64 ┆ i64 ┆ list [f32] │
+        │ i64 ┆ i64 ┆ list[f32]  │
         ╞═════╪═════╪════════════╡
         │ 1   ┆ 4   ┆ [1.0, 2.0] │
         ├╌╌╌╌╌┼╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -4230,32 +5556,30 @@ class ExprStringNameSpace:
 
     def strptime(
         self,
-        datatype: Union[Type[Date], Type[Datetime], Type[Time]],
-        fmt: Optional[str] = None,
+        datatype: type[Date] | type[Datetime] | type[Time],
+        fmt: str | None = None,
         strict: bool = True,
         exact: bool = True,
     ) -> Expr:
         """
-        Parse a UTF8 expression to a Date/Datetime/Time type.
+        Parse a Utf8 expression to a Date/Datetime/Time type.
 
         Parameters
         ----------
         datatype
             Date | Datetime | Time.
         fmt
-            format to use, see the following link for examples:
-            https://docs.rs/chrono/latest/chrono/format/strftime/index.html
-
-            example: "%y-%m-%d".
+            Format to use, refer to the
+            `chrono strftime documentation <https://docs.rs/chrono/latest/chrono/format/strftime/index.html>`_
+            for specification. Example: ``"%y-%m-%d"``.
         strict
-            raise an error if any conversion fails
+            Raise an error if any conversion fails.
         exact
             - If True, require an exact format match.
             - If False, allow the format to match anywhere in the target string.
 
         Examples
         --------
-
         Dealing with different formats.
 
         >>> s = pl.Series(
@@ -4294,30 +5618,49 @@ class ExprStringNameSpace:
         └────────────┘
 
         """
-        if not issubclass(datatype, DataType):
-            raise ValueError(
-                f"expected: {DataType} got: {datatype}"
-            )  # pragma: no cover
+        if not issubclass(datatype, DataType):  # pragma: no cover
+            raise ValueError(f"expected: {DataType} got: {datatype}")
         if datatype == Date:
             return wrap_expr(self._pyexpr.str_parse_date(fmt, strict, exact))
         elif datatype == Datetime:
             return wrap_expr(self._pyexpr.str_parse_datetime(fmt, strict, exact))
         elif datatype == Time:
             return wrap_expr(self._pyexpr.str_parse_time(fmt, strict, exact))
-        else:
-            raise ValueError(
-                "dtype should be of type {Date, Datetime, Time}"
-            )  # pragma: no cover
+        else:  # pragma: no cover
+            raise ValueError("dtype should be of type {Date, Datetime, Time}")
 
     def lengths(self) -> Expr:
         """
         Get the length of the Strings as UInt32.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"s": [None, "bears", "110"]})
+        >>> df.select(["s", pl.col("s").str.lengths().alias("len")])
+        shape: (3, 2)
+        ┌───────┬──────┐
+        │ s     ┆ len  │
+        │ ---   ┆ ---  │
+        │ str   ┆ u32  │
+        ╞═══════╪══════╡
+        │ null  ┆ null │
+        ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+        │ bears ┆ 5    │
+        ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+        │ 110   ┆ 3    │
+        └───────┴──────┘
+
         """
         return wrap_expr(self._pyexpr.str_lengths())
 
-    def concat(self, delimiter: str = "-") -> "Expr":
+    def concat(self, delimiter: str = "-") -> Expr:
         """
         Vertically concat the values in the Series to a single string value.
+
+        Parameters
+        ----------
+        delimiter
+            The delimiter to insert between consecutive string values.
 
         Returns
         -------
@@ -4325,10 +5668,8 @@ class ExprStringNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"foo": [1, None, 2]})
-        >>> df = df.select(pl.col("foo").str.concat("-"))
-        >>> df
+        >>> df.select(pl.col("foo").str.concat("-"))
         shape: (1, 1)
         ┌──────────┐
         │ foo      │
@@ -4376,7 +5717,7 @@ class ExprStringNameSpace:
         Return a copy of the string left filled with ASCII '0' digits to make a string of length width.
         A leading sign prefix ('+'/'-') is handled by inserting the padding after the sign character
         rather than before.
-        The original string is returned if width is less than or equal to `len(s)`.
+        The original string is returned if width is less than or equal to ``len(s)``.
 
         Parameters
         ----------
@@ -4385,7 +5726,6 @@ class ExprStringNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "num": [-10, -1, 0, 1, 10, 100, 1000, 10000, 100000, 1000000, None],
@@ -4422,56 +5762,226 @@ class ExprStringNameSpace:
 
     def ljust(self, width: int, fillchar: str = " ") -> Expr:
         """
-        Return the string left justified in a string of length width.
-        Padding is done using the specified `fillchar`,
-        The original string is returned if width is less than or equal to `len(s)`.
+        Return the string left justified in a string of length ``width``.
+
+        Padding is done using the specified ``fillchar``.
+        The original string is returned if ``width`` is less than or equal to ``len(s)``.
 
         Parameters
         ----------
         width
-            justify left to this length
+            Justify left to this length.
         fillchar
-            fill with this ASCII character
+            Fill with this ASCII character.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": ["cow", "monkey", None, "hippopotamus"]})
+        >>> df.select(pl.col("a").str.ljust(8, "*"))
+        shape: (4, 1)
+        ┌──────────────┐
+        │ a            │
+        │ ---          │
+        │ str          │
+        ╞══════════════╡
+        │ cow*****     │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ monkey**     │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null         │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ hippopotamus │
+        └──────────────┘
+
         """
         return wrap_expr(self._pyexpr.str_ljust(width, fillchar))
 
     def rjust(self, width: int, fillchar: str = " ") -> Expr:
         """
-        Return the string right justified in a string of length width.
-        Padding is done using the specified `fillchar`,
-        The original string is returned if width is less than or equal to `len(s)`.
+        Return the string right justified in a string of length ``width``.
+
+        Padding is done using the specified ``fillchar``.
+        The original string is returned if ``width`` is less than or equal to ``len(s)``.
 
         Parameters
         ----------
         width
-            justify right to this length
+            Justify right to this length.
         fillchar
-            fill with this ASCII character
+            Fill with this ASCII character.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": ["cow", "monkey", None, "hippopotamus"]})
+        >>> df.select(pl.col("a").str.rjust(8, "*"))
+        shape: (4, 1)
+        ┌──────────────┐
+        │ a            │
+        │ ---          │
+        │ str          │
+        ╞══════════════╡
+        │ *****cow     │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ **monkey     │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null         │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ hippopotamus │
+        └──────────────┘
+
         """
         return wrap_expr(self._pyexpr.str_rjust(width, fillchar))
 
-    def contains(self, pattern: str) -> Expr:
+    def contains(self, pattern: str, literal: bool = False) -> Expr:
         """
-        Check if string contains regex.
+        Check if string contains a substring that matches a regex.
 
         Parameters
         ----------
         pattern
-            Regex pattern.
+            A valid regex pattern.
+        literal
+            Treat pattern as a literal string.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"a": ["Crab", "cat and dog", "rab$bit", None]})
+        >>> df.select(
+        ...     [
+        ...         pl.col("a"),
+        ...         pl.col("a").str.contains("cat|bit").alias("regex"),
+        ...         pl.col("a").str.contains("rab$", literal=True).alias("literal"),
+        ...     ]
+        ... )
+        shape: (4, 3)
+        ┌─────────────┬───────┬─────────┐
+        │ a           ┆ regex ┆ literal │
+        │ ---         ┆ ---   ┆ ---     │
+        │ str         ┆ bool  ┆ bool    │
+        ╞═════════════╪═══════╪═════════╡
+        │ Crab        ┆ false ┆ false   │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┤
+        │ cat and dog ┆ true  ┆ false   │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┤
+        │ rab$bit     ┆ true  ┆ true    │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┤
+        │ null        ┆ null  ┆ null    │
+        └─────────────┴───────┴─────────┘
+
+        See Also
+        --------
+        starts_with : Check if string values start with a substring.
+        ends_with : Check if string values end with a substring.
         """
-        return wrap_expr(self._pyexpr.str_contains(pattern))
+        return wrap_expr(self._pyexpr.str_contains(pattern, literal))
+
+    def ends_with(self, sub: str) -> Expr:
+        """
+        Check if string values end with a substring.
+
+        Parameters
+        ----------
+        sub
+            Suffix substring.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"fruits": ["apple", "mango", None]})
+        >>> df.with_column(
+        ...     pl.col("fruits").str.ends_with("go").alias("has_suffix"),
+        ... )
+        shape: (3, 2)
+        ┌────────┬────────────┐
+        │ fruits ┆ has_suffix │
+        │ ---    ┆ ---        │
+        │ str    ┆ bool       │
+        ╞════════╪════════════╡
+        │ apple  ┆ false      │
+        ├╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ mango  ┆ true       │
+        ├╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null   ┆ null       │
+        └────────┴────────────┘
+
+        Using ``ends_with`` as a filter condition:
+
+        >>> df.filter(pl.col("fruits").str.ends_with("go"))
+        shape: (1, 1)
+        ┌────────┐
+        │ fruits │
+        │ ---    │
+        │ str    │
+        ╞════════╡
+        │ mango  │
+        └────────┘
+
+        See Also
+        --------
+        contains : Check if string contains a substring that matches a regex.
+        starts_with : Check if string values start with a substring.
+        """
+        return wrap_expr(self._pyexpr.str_ends_with(sub))
+
+    def starts_with(self, sub: str) -> Expr:
+        """
+        Check if string values start with a substring.
+
+        Parameters
+        ----------
+        sub
+            Prefix substring.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame({"fruits": ["apple", "mango", None]})
+        >>> df.with_column(
+        ...     pl.col("fruits").str.starts_with("app").alias("has_prefix"),
+        ... )
+        shape: (3, 2)
+        ┌────────┬────────────┐
+        │ fruits ┆ has_prefix │
+        │ ---    ┆ ---        │
+        │ str    ┆ bool       │
+        ╞════════╪════════════╡
+        │ apple  ┆ true       │
+        ├╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ mango  ┆ false      │
+        ├╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null   ┆ null       │
+        └────────┴────────────┘
+
+        Using ``starts_with`` as a filter condition:
+
+        >>> df.filter(pl.col("fruits").str.starts_with("app"))
+        shape: (1, 1)
+        ┌────────┐
+        │ fruits │
+        │ ---    │
+        │ str    │
+        ╞════════╡
+        │ apple  │
+        └────────┘
+
+        See Also
+        --------
+        contains : Check if string contains a substring that matches a regex.
+        ends_with : Check if string values end with a substring.
+        """
+        return wrap_expr(self._pyexpr.str_starts_with(sub))
 
     def json_path_match(self, json_path: str) -> Expr:
         """
         Extract the first match of json string with provided JSONPath expression.
         Throw errors if encounter invalid json strings.
         All return value will be casted to Utf8 regardless of the original value.
-        Documentation on JSONPath standard: https://goessner.net/articles/JsonPath/
+
+        Documentation on JSONPath standard can be found
+        `here <https://goessner.net/articles/JsonPath/>`_.
 
         Parameters
         ----------
         json_path
-            A valid JSON path query string
+            A valid JSON path query string.
 
         Returns
         -------
@@ -4479,7 +5989,6 @@ class ExprStringNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {"json_val": ['{"a":"1"}', None, '{"a":2}', '{"a":2.1}', '{"a":true}']}
         ... )
@@ -4570,6 +6079,7 @@ class ExprStringNameSpace:
         ├╌╌╌╌╌╌╌╌╌┤
         │ null    │
         └─────────┘
+
         """
         if encoding == "hex":
             return wrap_expr(self._pyexpr.str_hex_encode())
@@ -4597,7 +6107,6 @@ class ExprStringNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [
@@ -4701,25 +6210,23 @@ class ExprStringNameSpace:
     def split(self, by: str, inclusive: bool = False) -> Expr:
         """
         Split the string by a substring.
-        The return type will by of type List<Utf8>
 
         Parameters
         ----------
         by
-            substring
+            Substring to split by.
         inclusive
-            Include the split character/string in the results
+            If True, include the split character/string in the results.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"s": ["foo bar", "foo-bar", "foo bar baz"]})
         >>> df.select(pl.col("s").str.split(by=" "))
         shape: (3, 1)
         ┌───────────────────────┐
         │ s                     │
         │ ---                   │
-        │ list [str]            │
+        │ list[str]             │
         ╞═══════════════════════╡
         │ ["foo", "bar"]        │
         ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -4728,6 +6235,10 @@ class ExprStringNameSpace:
         │ ["foo", "bar", "baz"] │
         └───────────────────────┘
 
+        Returns
+        -------
+        List of Utf8 type
+
         """
         if inclusive:
             return wrap_expr(self._pyexpr.str_split_inclusive(by))
@@ -4735,23 +6246,21 @@ class ExprStringNameSpace:
 
     def split_exact(self, by: str, n: int, inclusive: bool = False) -> Expr:
         """
-        Split the string by a substring into a struct of `n` fields.
-        The return type will by of type Struct<Utf8>
+        Split the string by a substring into a struct of ``n`` fields.
 
-        If it cannot make `n` splits, the remaiming field elements will be null
+        If it cannot make ``n`` splits, the remaining field elements will be null.
 
         Parameters
         ----------
         by
-            substring
+            Substring to split by.
         n
-            Number of splits to make
+            Number of splits to make.
         inclusive
-            Include the split character/string in the results
+            If True, include the split character/string in the results.
 
         Examples
         --------
-
         >>> (
         ...     pl.DataFrame({"x": ["a_1", None, "c", "d_4"]}).select(
         ...         [
@@ -4760,28 +6269,59 @@ class ExprStringNameSpace:
         ...     )
         ... )
         shape: (4, 1)
-        ┌───────────────────────────────────────────┐
-        │ fields                                    │
-        │ ---                                       │
-        │ struct[2]{'field_0': str, 'field_1': str} │
-        ╞═══════════════════════════════════════════╡
-        │ {"a","1"}                                 │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ {null,null}                               │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ {"c",null}                                │
-        ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ {"d","4"}                                 │
-        └───────────────────────────────────────────┘
+        ┌─────────────┐
+        │ fields      │
+        │ ---         │
+        │ struct[2]   │
+        ╞═════════════╡
+        │ {"a","1"}   │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ {null,null} │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ {"c",null}  │
+        ├╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ {"d","4"}   │
+        └─────────────┘
+
+
+        Split string values in column x in exactly 2 parts and assign
+        each part to a new column.
+
+        >>> pl.DataFrame({"x": ["a_1", None, "c", "d_4"]}).with_columns(
+        ...     [
+        ...         pl.col("x")
+        ...         .str.split_exact("_", 1)
+        ...         .struct.rename_fields(["first_part", "second_part"])
+        ...         .alias("fields"),
+        ...     ]
+        ... ).unnest("fields")
+        shape: (4, 3)
+        ┌──────┬────────────┬─────────────┐
+        │ x    ┆ first_part ┆ second_part │
+        │ ---  ┆ ---        ┆ ---         │
+        │ str  ┆ str        ┆ str         │
+        ╞══════╪════════════╪═════════════╡
+        │ a_1  ┆ a          ┆ 1           │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ null ┆ null       ┆ null        │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ c    ┆ c          ┆ null        │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+        │ d_4  ┆ d          ┆ 4           │
+        └──────┴────────────┴─────────────┘
+
+        Returns
+        -------
+        Struct of Utf8 type
 
         """
         if inclusive:
             return wrap_expr(self._pyexpr.str_split_exact_inclusive(by, n))
         return wrap_expr(self._pyexpr.str_split_exact(by, n))
 
-    def replace(self, pattern: str, value: str) -> Expr:
+    def replace(self, pattern: str, value: str, literal: bool = False) -> Expr:
         """
-        Replace first regex match with a string value.
+        Replace first matching regex/literal substring with a new string value.
 
         Parameters
         ----------
@@ -4789,16 +6329,19 @@ class ExprStringNameSpace:
             Regex pattern.
         value
             Replacement string.
+        literal
+             Treat pattern as a literal string.
 
         See Also
         --------
-        replace_all : Replace substring on all regex pattern matches.
+        replace_all : Replace all matching regex/literal substrings.
 
         Examples
         --------
-
         >>> df = pl.DataFrame({"id": [1, 2], "text": ["123abc", "abc456"]})
-        >>> df.with_column(pl.col("text").str.replace(r"abc\b", "ABC"))
+        >>> df.with_column(
+        ...     pl.col("text").str.replace(r"abc\b", "ABC")
+        ... )  # doctest: +IGNORE_RESULT
         shape: (2, 2)
         ┌─────┬────────┐
         │ id  ┆ text   │
@@ -4811,11 +6354,11 @@ class ExprStringNameSpace:
         └─────┴────────┘
 
         """
-        return wrap_expr(self._pyexpr.str_replace(pattern, value))
+        return wrap_expr(self._pyexpr.str_replace(pattern, value, literal))
 
-    def replace_all(self, pattern: str, value: str) -> Expr:
+    def replace_all(self, pattern: str, value: str, literal: bool = False) -> Expr:
         """
-        Replace substring on all regex pattern matches.
+        Replace all matching regex/literal substrings with a new string value.
 
         Parameters
         ----------
@@ -4823,10 +6366,12 @@ class ExprStringNameSpace:
             Regex pattern.
         value
             Replacement string.
+        literal
+             Treat pattern as a literal string.
 
         See Also
         --------
-        replace : Replace first regex match with a string value.
+        replace : Replace first matching regex/literal substring.
 
         Examples
         --------
@@ -4843,16 +6388,17 @@ class ExprStringNameSpace:
         │ 2   ┆ 123-123 │
         └─────┴─────────┘
         """
-        return wrap_expr(self._pyexpr.str_replace_all(pattern, value))
+        return wrap_expr(self._pyexpr.str_replace_all(pattern, value, literal))
 
-    def slice(self, start: int, length: Optional[int] = None) -> Expr:
+    def slice(self, start: int, length: int | None = None) -> Expr:
         """
         Create subslices of the string values of a Utf8 Series.
 
         Parameters
         ----------
         start
-            Start of the slice (negative indexing may be used).
+            Starting index of the slice (zero-indexed). Negative indexing
+            may be used.
         length
             Optional length of the slice.
 
@@ -4873,12 +6419,11 @@ class ExprDateTimeNameSpace:
 
     def truncate(
         self,
-        every: Union[str, timedelta],
-        offset: Optional[Union[str, timedelta]] = None,
+        every: str | timedelta,
+        offset: str | timedelta | None = None,
     ) -> Expr:
         """
         Divide the date/ datetime range into buckets.
-        Data must be sorted, if not the output does not make sense.
 
         The `every` and `offset` arguments are created with
         the following string language:
@@ -4909,7 +6454,6 @@ class ExprDateTimeNameSpace:
 
         Examples
         --------
-
         >>> from datetime import timedelta, datetime
         >>> start = datetime(2001, 1, 1)
         >>> stop = datetime(2001, 1, 2)
@@ -4987,7 +6531,10 @@ class ExprDateTimeNameSpace:
 
     def strftime(self, fmt: str) -> Expr:
         """
-        Format Date/datetime with a formatting rule: See [chrono strftime/strptime](https://docs.rs/chrono/0.4.19/chrono/format/strftime/index.html).
+        Format Date/datetime with a formatting rule.
+
+        See `chrono strftime/strptime <https://docs.rs/chrono/latest/chrono/format/strftime/index.html>`_.
+
         """
         return wrap_expr(self._pyexpr.strftime(fmt))
 
@@ -5003,6 +6550,19 @@ class ExprDateTimeNameSpace:
         Year as Int32
         """
         return wrap_expr(self._pyexpr.year())
+
+    def quarter(self) -> Expr:
+        """
+        Extract quarter from underlying Date representation.
+        Can be performed on Date and Datetime.
+
+        Returns the quarter ranging from 1 to 4.
+
+        Returns
+        -------
+        Quarter as UInt32
+        """
+        return wrap_expr(self._pyexpr.quarter())
 
     def month(self) -> Expr:
         """
@@ -5143,7 +6703,7 @@ class ExprDateTimeNameSpace:
         tu
             One of {'ns', 'us', 'ms', 's', 'd'}
         """
-        if tu in ["ns", "us", "ms"]:
+        if tu in DTYPE_TEMPORAL_UNITS:
             return self.timestamp(tu)
         if tu == "s":
             return wrap_expr(self._pyexpr.dt_epoch_seconds())
@@ -5228,13 +6788,13 @@ class ExprDateTimeNameSpace:
         """
         return wrap_expr(self._pyexpr.dt_cast_time_unit(tu))
 
-    def and_time_unit(self, tu: str, dtype: Type[DataType] = Datetime) -> Expr:
+    def and_time_unit(self, tu: str, dtype: type[DataType] = Datetime) -> Expr:
         """
         Set time unit a Series of type Datetime. This does not modify underlying data,
         and should be used to fix an incorrect time unit.
 
-        ..deprecated::
-            Use `with_time_unit`
+        .. deprecated::
+            Use :func:`with_time_unit` instead.
 
 
         Parameters
@@ -5246,31 +6806,31 @@ class ExprDateTimeNameSpace:
         """
         return self.with_time_unit(tu)
 
-    def and_time_zone(self, tz: Optional[str]) -> Expr:
+    def and_time_zone(self, tz: str | None) -> Expr:
         """
         Set time zone for a Series of type Datetime.
 
-        ..deprecated::
-            Use `with_time_zone`
+        .. deprecated::
+            Use :func:`with_time_zone` instead.
 
         Parameters
         ----------
         tz
-            Time zone for the `Datetime` Series
+            Time zone for the `Datetime` Series.
 
         """
         return wrap_expr(self._pyexpr).map(
             lambda s: s.dt.with_time_zone(tz), return_dtype=Datetime
         )
 
-    def with_time_zone(self, tz: Optional[str]) -> Expr:
+    def with_time_zone(self, tz: str | None) -> Expr:
         """
         Set time zone for a Series of type Datetime.
 
         Parameters
         ----------
         tz
-            Time zone for the `Datetime` Series
+            Time zone for the `Datetime` Series.
 
         """
         return wrap_expr(self._pyexpr).map(
@@ -5337,25 +6897,48 @@ class ExprDateTimeNameSpace:
         """
         return wrap_expr(self._pyexpr.duration_nanoseconds())
 
+    def offset_by(self, by: str) -> Expr:
+        """
+        Offset this date by a relative time offset.
+
+         This differs from `pl.col("foo") + timedelta` in that it can
+         take months and leap years into account
+
+        Parameters
+        ----------
+        by
+            The offset is dictated by the following string language:
+
+            - 1ns   (1 nanosecond)
+            - 1us   (1 microsecond)
+            - 1ms   (1 millisecond)
+            - 1s    (1 second)
+            - 1m    (1 minute)
+            - 1h    (1 hour)
+            - 1d    (1 day)
+            - 1w    (1 week)
+            - 1mo   (1 calendar month)
+            - 1y    (1 calendar year)
+            - 1i    (1 index count)
+
+        Returns
+        -------
+        Date/Datetime expression
+        """
+        return wrap_expr(self._pyexpr.dt_offset_by(by))
+
 
 def expr_to_lit_or_expr(
-    expr: Union[
-        Expr,
-        bool,
-        int,
-        float,
-        str,
-        "pli.Series",
-        None,
-        Sequence[
-            Union[
-                int,
-                float,
-                str,
-                None,
-            ]
-        ],
-    ],
+    expr: (
+        Expr
+        | bool
+        | int
+        | float
+        | str
+        | pli.Series
+        | None
+        | Sequence[(int | float | str | None)]
+    ),
     str_to_lit: bool = True,
 ) -> Expr:
     """
@@ -5397,7 +6980,7 @@ class ExprCatNameSpace:
     def __init__(self, expr: Expr):
         self._pyexpr = expr._pyexpr
 
-    def set_ordering(self, ordering: str) -> "Expr":
+    def set_ordering(self, ordering: str) -> Expr:
         """
         Determine how this categorical series should be sorted.
 
@@ -5410,7 +6993,6 @@ class ExprCatNameSpace:
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {"cats": ["z", "z", "k", "a", "b"], "vals": [3, 1, 2, 2, 3]}
         ... ).with_columns(
@@ -5441,10 +7023,10 @@ class ExprCatNameSpace:
 
 
 def _prepare_alpha(
-    com: Optional[float] = None,
-    span: Optional[float] = None,
-    half_life: Optional[float] = None,
-    alpha: Optional[float] = None,
+    com: float | None = None,
+    span: float | None = None,
+    half_life: float | None = None,
+    alpha: float | None = None,
 ) -> float:
     if com is not None and alpha is None:
         assert com >= 0.0
@@ -5454,16 +7036,16 @@ def _prepare_alpha(
         alpha = 2.0 / (span + 1.0)
     if half_life is not None and alpha is None:
         assert half_life > 0.0
-        alpha = 1.0 - np.exp(-np.log(2.0) / half_life)
+        alpha = 1.0 - math.exp(-math.log(2.0) / half_life)
     if alpha is None:
         raise ValueError("at least one of {com, span, half_life, alpha} should be set")
     return alpha
 
 
 def _prepare_rolling_window_args(
-    window_size: Union[int, str],
-    min_periods: Optional[int] = None,
-) -> Tuple[str, int]:
+    window_size: int | str,
+    min_periods: int | None = None,
+) -> tuple[str, int]:
     if isinstance(window_size, int):
         if min_periods is None:
             min_periods = window_size

@@ -49,7 +49,7 @@ impl DataFrame {
 
         for (i, s) in columns.iter().enumerate() {
             // Safety:
-            // offsets are not take longer than the Series.
+            // offsets don't have indices exceeding Series length.
             if let Ok((exploded, offsets)) = get_exploded(s) {
                 let col_idx = self.check_name_to_idx(s.name())?;
 
@@ -367,9 +367,10 @@ mod test {
         let out = df.explode(["foo"])?;
         let expected = df![
             "foo" => [Some(1), Some(2), Some(3), None, Some(1), Some(1), Some(1)],
-            "B" => [1, 1, 1, 2, 2, 2, 3],
+            "B" => [1, 1, 1, 2, 3, 3, 3],
             "C" => [1, 1, 1, 1, 1, 1, 1],
         ]?;
+
         assert!(out.frame_equal_missing(&expected));
         Ok(())
     }

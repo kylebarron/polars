@@ -77,7 +77,7 @@ pub enum AExpr {
     },
     AnonymousFunction {
         input: Vec<Node>,
-        function: NoEq<Arc<dyn SeriesUdf>>,
+        function: SpecialEq<Arc<dyn SeriesUdf>>,
         output_type: GetOutput,
         options: FunctionOptions,
     },
@@ -191,9 +191,20 @@ impl AExpr {
                 name,
                 arena.get(*expr).get_type(schema, ctxt, arena)?,
             )),
-            Column(name) => schema
-                .get_field(name)
-                .ok_or_else(|| PolarsError::NotFound(name.to_string())),
+            Column(name) => {
+                let field = schema
+                    .get_field(name)
+                    .ok_or_else(|| PolarsError::NotFound(name.to_string()));
+
+                match ctxt {
+                    Context::Default => field,
+                    Context::Aggregation => field.map(|mut field| {
+                        let dtype = DataType::List(Box::new(field.data_type().clone()));
+                        field.coerce(dtype);
+                        field
+                    }),
+                }
+            }
             Literal(sv) => Ok(Field::new("literal", sv.get_datatype())),
             BinaryExpr { left, right, op } => {
                 use DataType::*;
@@ -246,7 +257,8 @@ impl AExpr {
                 use AAggExpr::*;
                 match agg {
                     Max(expr) | Sum(expr) | Min(expr) | First(expr) | Last(expr) => {
-                        arena.get(*expr).to_field(schema, ctxt, arena)
+                        // default context because `col()` would return a list in aggregation context
+                        arena.get(*expr).to_field(schema, Context::Default, arena)
                     }
                     Median(expr) => {
                         let mut field = arena.get(*expr).to_field(schema, ctxt, arena)?;
@@ -261,7 +273,9 @@ impl AExpr {
                         Ok(field)
                     }
                     List(expr) => {
-                        let mut field = arena.get(*expr).to_field(schema, ctxt, arena)?;
+                        // default context because `col()` would return a list in aggregation context
+                        let mut field =
+                            arena.get(*expr).to_field(schema, Context::Default, arena)?;
                         field.coerce(DataType::List(field.data_type().clone().into()));
                         Ok(field)
                     }

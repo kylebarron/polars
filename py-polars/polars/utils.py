@@ -1,30 +1,39 @@
+from __future__ import annotations
+
 import ctypes
+import functools
 import os
 import sys
+import warnings
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Callable, Iterable, Sequence
 
-import numpy as np
+from polars.datatypes import DataType, Date, Datetime
 
 try:
     from polars.polars import pool_size as _pool_size
 
     _DOCUMENTING = False
-except ImportError:  # pragma: no cover
+except ImportError:
     _DOCUMENTING = True
 
-from polars.datatypes import DataType, Date, Datetime
+try:
+    import numpy as np
+
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
 
 if sys.version_info >= (3, 10):
     from typing import TypeGuard
 else:
-    from typing_extensions import TypeGuard  # pragma: no cover
+    from typing_extensions import TypeGuard
 
 
 def _process_null_values(
-    null_values: Union[None, str, List[str], Dict[str, str]] = None,
-) -> Union[None, str, List[str], List[Tuple[str, str]]]:
+    null_values: None | str | list[str] | dict[str, str] = None,
+) -> None | str | list[str] | list[tuple[str, str]]:
     if isinstance(null_values, dict):
         return list(null_values.items())
     else:
@@ -50,6 +59,8 @@ def _ptr_to_numpy(ptr: int, len: int, ptr_type: Any) -> np.ndarray:
     View of memory block as numpy array.
 
     """
+    if not _NUMPY_AVAILABLE:
+        raise ImportError("'numpy' is required for this functionality.")
     ptr_ctype = ctypes.cast(ptr, ctypes.POINTER(ptr_type))
     return np.ctypeslib.as_array(ptr_ctype, (len,))
 
@@ -66,7 +77,7 @@ def timedelta_in_nanoseconds_window(td: timedelta) -> bool:
     return in_nanoseconds_window(datetime(1970, 1, 1) + td)
 
 
-def _datetime_to_pl_timestamp(dt: datetime, tu: Optional[str]) -> int:
+def _datetime_to_pl_timestamp(dt: datetime, tu: str | None) -> int:
     """
     Converts a python datetime to a timestamp in nanoseconds
     """
@@ -80,10 +91,10 @@ def _datetime_to_pl_timestamp(dt: datetime, tu: Optional[str]) -> int:
         # python has us precision
         return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1e6)
     else:
-        raise ValueError("expected on of {'ns', 'ms'}")
+        raise ValueError("expected one of {'ns', 'us', 'ms'}")
 
 
-def _timedelta_to_pl_timedelta(td: timedelta, tu: Optional[str] = None) -> int:
+def _timedelta_to_pl_timedelta(td: timedelta, tu: str | None = None) -> int:
     if tu == "ns":
         return int(td.total_seconds() * 1e9)
     elif tu == "us":
@@ -120,50 +131,46 @@ def is_int_sequence(val: Sequence[object]) -> TypeGuard[Sequence[int]]:
     return _is_iterable_of(val, Sequence, int)
 
 
-def _is_iterable_of(val: Iterable, itertype: Type, eltype: Type) -> bool:
+def _is_iterable_of(val: Iterable, itertype: type, eltype: type) -> bool:
     return isinstance(val, itertype) and all(isinstance(x, eltype) for x in val)
 
 
 def range_to_slice(rng: range) -> slice:
-    step: Optional[int]
-    # maybe we can slice instead of take by indices
-    if rng.step != 1:
-        step = rng.step
-    else:
-        step = None
-    return slice(rng.start, rng.stop, step)
+    """
+    Return the given range as an equivalent slice.
+    """
+    return slice(rng.start, rng.stop, rng.step)
 
 
 def handle_projection_columns(
-    columns: Optional[Union[List[str], List[int]]]
-) -> Tuple[Optional[List[int]], Optional[List[str]]]:
-    projection: Optional[List[int]] = None
+    columns: list[str] | list[int] | None,
+) -> tuple[list[int] | None, list[str] | None]:
+    projection: list[int] | None = None
     if columns:
         if is_int_sequence(columns):
-            projection = columns  # type: ignore
+            projection = columns  # type: ignore[assignment]
             columns = None
         elif not is_str_sequence(columns):
             raise ValueError(
                 "columns arg should contain a list of all integers or all strings values."
             )
-    return projection, columns  # type: ignore
+    return projection, columns  # type: ignore[return-value]
 
 
 def _to_python_time(value: int) -> time:
+    if value == 0:
+        return time(microsecond=0)
     value = value // 1_000
     microsecond = value
     seconds = (microsecond // 1000_000) % 60
     minutes = (microsecond // (1000_000 * 60)) % 60
     hours = (microsecond // (1000_000 * 60 * 60)) % 24
-
-    microsecond = microsecond % seconds * 1000_000
+    microsecond = microsecond - (seconds + minutes * 60 + hours * 3600) * 1000_000
 
     return time(hour=hours, minute=minutes, second=seconds, microsecond=microsecond)
 
 
-def _to_python_timedelta(
-    value: Union[int, float], tu: Optional[str] = "ns"
-) -> timedelta:
+def _to_python_timedelta(value: int | float, tu: str | None = "ns") -> timedelta:
     if tu == "ns":
         return timedelta(microseconds=value // 1e3)
     elif tu == "us":
@@ -175,10 +182,9 @@ def _to_python_timedelta(
 
 
 def _prepare_row_count_args(
-    row_count_name: Optional[str] = None,
+    row_count_name: str | None = None,
     row_count_offset: int = 0,
-) -> Optional[Tuple[str, int]]:
-
+) -> tuple[str, int] | None:
     if row_count_name is not None:
         return (row_count_name, row_count_offset)
     else:
@@ -189,11 +195,11 @@ EPOCH = datetime(1970, 1, 1).replace(tzinfo=None)
 
 
 def _to_python_datetime(
-    value: Union[int, float],
-    dtype: Type[DataType],
-    tu: Optional[str] = "ns",
-    tz: Optional["str"] = None,
-) -> Union[date, datetime]:
+    value: int | float,
+    dtype: type[DataType],
+    tu: str | None = "ns",
+    tz: str | None = None,
+) -> date | datetime:
     if dtype == Date:
         # days to seconds
         # important to create from utc. Not doing this leads
@@ -234,7 +240,7 @@ def _in_notebook() -> bool:
     return True
 
 
-def format_path(path: Union[str, Path]) -> str:
+def format_path(path: str | Path) -> str:
     """
     Returns a string path, expanding the home directory if present.
     """
@@ -246,3 +252,46 @@ def threadpool_size() -> int:
     Get the size of polars; thread pool
     """
     return _pool_size()
+
+
+def deprecated_alias(**aliases: str) -> Callable:
+    """Decorator for deprecated function and method arguments.
+
+    Use as follows:
+
+    @deprecated_alias(old_arg='new_arg')
+    def myfunc(new_arg):
+        ...
+    """
+
+    def deco(f: Callable) -> Callable:
+        @functools.wraps(f)
+        def wrapper(*args: Any, **kwargs: Any) -> Callable:
+            rename_kwargs(f.__name__, kwargs, aliases)
+            return f(*args, **kwargs)
+
+        return wrapper
+
+    return deco
+
+
+def rename_kwargs(
+    func_name: str, kwargs: dict[str, str], aliases: dict[str, str]
+) -> None:
+    """Helper function for deprecating function and method arguments."""
+    for alias, new in aliases.items():
+        if alias in kwargs:
+            if new in kwargs:
+                raise TypeError(
+                    f"{func_name} received both {alias} and {new} as arguments!"
+                    f" {alias} is deprecated, use {new} instead."
+                )
+            warnings.warn(
+                message=(
+                    f"`{alias}` is deprecated as an argument to `{func_name}`; use"
+                    f" `{new}` instead."
+                ),
+                category=DeprecationWarning,
+                stacklevel=3,
+            )
+            kwargs[new] = kwargs.pop(alias)

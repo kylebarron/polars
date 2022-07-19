@@ -5,6 +5,8 @@ use polars_io::RowCount;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+pub type FileCount = u32;
+
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CsvParserOptions {
@@ -23,6 +25,7 @@ pub struct CsvParserOptions {
     pub(crate) encoding: CsvEncoding,
     pub(crate) row_count: Option<RowCount>,
     pub(crate) parse_dates: bool,
+    pub(crate) file_counter: FileCount,
 }
 #[cfg(feature = "parquet")]
 #[derive(Clone, Debug)]
@@ -31,9 +34,11 @@ pub struct ParquetOptions {
     pub(crate) n_rows: Option<usize>,
     pub(crate) with_columns: Option<Arc<Vec<String>>>,
     pub(crate) cache: bool,
-    pub(crate) parallel: bool,
+    pub(crate) parallel: polars_io::parquet::ParallelStrategy,
     pub(crate) rechunk: bool,
     pub(crate) row_count: Option<RowCount>,
+    pub(crate) file_counter: FileCount,
+    pub(crate) low_memory: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -44,6 +49,30 @@ pub struct IpcScanOptions {
     pub cache: bool,
     pub row_count: Option<RowCount>,
     pub rechunk: bool,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IpcScanOptionsInner {
+    pub(crate) n_rows: Option<usize>,
+    pub(crate) with_columns: Option<Arc<Vec<String>>>,
+    pub(crate) cache: bool,
+    pub(crate) row_count: Option<RowCount>,
+    pub(crate) rechunk: bool,
+    pub(crate) file_counter: FileCount,
+}
+
+impl From<IpcScanOptions> for IpcScanOptionsInner {
+    fn from(options: IpcScanOptions) -> Self {
+        Self {
+            n_rows: options.n_rows,
+            with_columns: options.with_columns,
+            cache: options.cache,
+            row_count: options.row_count,
+            rechunk: options.rechunk,
+            file_counter: Default::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Copy, Default)]
@@ -70,7 +99,7 @@ pub struct DistinctOptions {
     pub(crate) keep_strategy: UniqueKeepStrategy,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ApplyOptions {
     /// Collect groups to a list and apply the function over the groups.
@@ -85,7 +114,7 @@ pub enum ApplyOptions {
     ApplyFlat,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct WindowOptions {
     /// Explode the aggregated list and just do a hstack instead of a join
@@ -93,7 +122,7 @@ pub struct WindowOptions {
     pub(crate) explode: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FunctionOptions {
     /// Collect groups to a list and apply the function over the groups.
@@ -130,7 +159,7 @@ pub struct FunctionOptions {
     pub(crate) fmt_str: &'static str,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct LogicalPlanUdfOptions {
     ///  allow predicate pushdown optimizations
     pub(crate) predicate_pd: bool,
@@ -140,7 +169,7 @@ pub struct LogicalPlanUdfOptions {
     pub(crate) fmt_str: &'static str,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SortArguments {
     pub(crate) reverse: Vec<bool>,
@@ -149,12 +178,8 @@ pub struct SortArguments {
     pub(crate) slice: Option<(i64, usize)>,
 }
 
-#[derive(Clone, PartialEq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(
-    all(feature = "serde", feature = "object"),
-    serde(bound(deserialize = "'de: 'static"))
-)]
 #[cfg(feature = "python")]
 pub struct PythonOptions {
     // Serialized Fn() -> Result<DataFrame>
@@ -164,7 +189,7 @@ pub struct PythonOptions {
     pub(crate) with_columns: Option<Arc<Vec<String>>>,
 }
 
-#[derive(Clone, PartialEq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AnonymousScanOptions {
     pub schema: SchemaRef,

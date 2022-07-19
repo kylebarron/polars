@@ -1,9 +1,8 @@
 #![feature(vec_into_raw_parts)]
 #![allow(clippy::nonstandard_macro_braces)] // needed because clippy does not understand proc macro of pyo3
 #![allow(clippy::transmute_undefined_repr)]
-#[macro_use]
-extern crate polars;
 extern crate core;
+extern crate polars;
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
@@ -51,7 +50,6 @@ use mimalloc::MiMalloc;
 use polars::functions::{diag_concat_df, hor_concat_df};
 use polars::prelude::Null;
 use polars_core::datatypes::TimeUnit;
-use polars_core::frame::row::Row;
 use polars_core::prelude::DataFrame;
 use polars_core::prelude::IntoSeries;
 use polars_core::POOL;
@@ -266,29 +264,29 @@ fn py_duration(
 
 #[pyfunction]
 fn concat_df(dfs: &PyAny, py: Python) -> PyResult<PyDataFrame> {
-    use polars_core::utils::rayon::prelude::*;
+    use polars_core::{error::Result, utils::rayon::prelude::*};
 
     let (seq, _len) = get_pyseq(dfs)?;
     let mut iter = seq.iter()?;
     let first = iter.next().unwrap()?;
 
     let first_rdf = get_df(first)?;
-    let schema = first_rdf.schema();
+    let identity_df = first_rdf.slice(0, 0);
 
-    let mut rdfs: Vec<polars_core::error::Result<DataFrame>> = vec![Ok(first_rdf)];
+    let mut rdfs: Vec<Result<DataFrame>> = vec![Ok(first_rdf)];
 
     for item in iter {
         let rdf = get_df(item?)?;
         rdfs.push(Ok(rdf));
     }
 
-    let identity = || DataFrame::from_rows_and_schema(&[Row::default()], &schema);
+    let identity = || Ok(identity_df.clone());
 
     let df = py
         .allow_threads(|| {
             polars_core::POOL.install(|| {
                 rdfs.into_par_iter()
-                    .fold(identity, |acc, df| {
+                    .fold(identity, |acc: Result<DataFrame>, df| {
                         let mut acc = acc?;
                         acc.vstack_mut(&df?)?;
                         Ok(acc)
@@ -471,6 +469,11 @@ fn pool_size() -> usize {
     POOL.current_num_threads()
 }
 
+#[pyfunction]
+pub fn arg_where(condition: PyExpr) -> PyExpr {
+    polars::lazy::dsl::arg_where(condition.inner).into()
+}
+
 #[pymodule]
 fn polars(py: Python, m: &PyModule) -> PyResult<()> {
     m.add("NotFoundError", py.get_type::<NotFoundError>())
@@ -531,5 +534,6 @@ fn polars(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(as_struct)).unwrap();
     m.add_wrapped(wrap_pyfunction!(repeat)).unwrap();
     m.add_wrapped(wrap_pyfunction!(pool_size)).unwrap();
+    m.add_wrapped(wrap_pyfunction!(arg_where)).unwrap();
     Ok(())
 }

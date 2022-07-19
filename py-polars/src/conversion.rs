@@ -158,9 +158,9 @@ impl<'a> FromPyObject<'a> for Wrap<Utf8Chunked> {
 impl<'a> FromPyObject<'a> for Wrap<NullValues> {
     fn extract(ob: &'a PyAny) -> PyResult<Self> {
         if let Ok(s) = ob.extract::<String>() {
-            Ok(Wrap(NullValues::AllColumns(s)))
+            Ok(Wrap(NullValues::AllColumnsSingle(s)))
         } else if let Ok(s) = ob.extract::<Vec<String>>() {
-            Ok(Wrap(NullValues::Columns(s)))
+            Ok(Wrap(NullValues::AllColumns(s)))
         } else if let Ok(s) = ob.extract::<Vec<(String, String)>>() {
             Ok(Wrap(NullValues::Named(s)))
         } else {
@@ -851,5 +851,21 @@ pub(crate) fn parse_strategy(strat: &str, limit: FillNullLimit) -> PyResult<Fill
         };
 
         Ok(strat)
+    }
+}
+impl FromPyObject<'_> for Wrap<ParallelStrategy> {
+    fn extract(ob: &PyAny) -> PyResult<Self> {
+        let unit = match ob.str()?.to_str()? {
+            "auto" => ParallelStrategy::Auto,
+            "columns" => ParallelStrategy::Columns,
+            "row_groups" => ParallelStrategy::RowGroups,
+            "none" => ParallelStrategy::None,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "expected one of {'auto', 'columns', 'row_groups', 'none'}",
+                ))
+            }
+        };
+        Ok(Wrap(unit))
     }
 }

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import typing
 from datetime import datetime
 
@@ -256,7 +258,7 @@ def test_list_to_struct() -> None:
         [pl.col("a").arr.to_struct(n_field_strategy="max_width")]
     ).to_series().to_list() == [
         {"field_0": 1, "field_1": 2, "field_2": None},
-        {"field_0": 1, "field_1": 2, "field_2": 1},
+        {"field_0": 1, "field_1": 2, "field_2": 3},
     ]
 
 
@@ -529,4 +531,26 @@ def test_is_in_struct() -> None:
     assert df.filter(pl.col("struct_elem").is_in("struct_list")).to_dict(False) == {
         "struct_elem": [{"a": 1, "b": 11}],
         "struct_list": [[{"a": 1, "b": 11}, {"a": 2, "b": 12}, {"a": 3, "b": 13}]],
+    }
+
+
+def test_nested_explode_4026() -> None:
+    df = pl.DataFrame(
+        {
+            "data": [
+                [
+                    {"account_id": 10, "values": [1, 2]},
+                    {"account_id": 11, "values": [10, 20]},
+                ]
+            ],
+            "day": ["monday"],
+        }
+    )
+
+    assert df.explode("data").to_dict(False) == {
+        "data": [
+            {"account_id": 10, "values": [1, 2]},
+            {"account_id": 11, "values": [10, 20]},
+        ],
+        "day": ["monday", "monday"],
     }

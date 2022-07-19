@@ -108,7 +108,6 @@ impl SeriesTrait for SeriesWrap<StructChunked> {
             .into_series()
     }
 
-    #[doc(hidden)]
     fn append(&mut self, other: &Series) -> Result<()> {
         let other = other.struct_()?;
         let offset = self.chunks().len();
@@ -125,7 +124,6 @@ impl SeriesTrait for SeriesWrap<StructChunked> {
         Ok(())
     }
 
-    #[doc(hidden)]
     fn extend(&mut self, other: &Series) -> Result<()> {
         let other = other.struct_()?;
 
@@ -273,7 +271,7 @@ impl SeriesTrait for SeriesWrap<StructChunked> {
                         _ => {}
                     }
                     if let Some(validity) = &validity_agg {
-                        null_count += validity.null_count()
+                        null_count += validity.unset_bits()
                     }
                 }
             }
@@ -315,6 +313,12 @@ impl SeriesTrait for SeriesWrap<StructChunked> {
     fn is_not_null(&self) -> BooleanChunked {
         let is_not_null = self.0.fields().iter().map(|s| s.is_not_null());
         is_not_null.reduce(|lhs, rhs| lhs.bitand(rhs)).unwrap()
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.0.fields_mut().iter_mut().for_each(|s| {
+            s.shrink_to_fit();
+        });
     }
 
     fn reverse(&self) -> Series {

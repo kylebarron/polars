@@ -1,7 +1,7 @@
-# flake8: noqa: W191,E101
+from __future__ import annotations
+
 import io
 import os
-from typing import List
 
 import numpy as np
 import pandas as pd
@@ -11,11 +11,11 @@ import polars as pl
 
 
 @pytest.fixture
-def compressions() -> List[str]:
+def compressions() -> list[str]:
     return ["uncompressed", "snappy", "gzip", "lzo", "brotli", "lz4", "zstd"]
 
 
-def test_to_from_buffer(df: pl.DataFrame, compressions: List[str]) -> None:
+def test_to_from_buffer(df: pl.DataFrame, compressions: list[str]) -> None:
     for compression in compressions:
         if compression == "lzo":
             # lzo compression is not supported now
@@ -37,9 +37,16 @@ def test_to_from_buffer(df: pl.DataFrame, compressions: List[str]) -> None:
             read_df = pl.read_parquet(buf)
             assert df.frame_equal(read_df, null_equal=True)
 
+    for use_pyarrow in [True, False]:
+        buf = io.BytesIO()
+        df.write_parquet(buf, use_pyarrow=use_pyarrow)
+        buf.seek(0)
+        read_df = pl.read_parquet(buf, use_pyarrow=use_pyarrow)
+        assert df.frame_equal(read_df, null_equal=True)
+
 
 def test_to_from_file(
-    io_test_dir: str, df: pl.DataFrame, compressions: List[str]
+    io_test_dir: str, df: pl.DataFrame, compressions: list[str]
 ) -> None:
     f = os.path.join(io_test_dir, "small.parquet")
     for compression in compressions:
@@ -152,3 +159,47 @@ def test_glob_parquet(io_test_dir: str) -> None:
     path = os.path.join(io_test_dir, "small*.parquet")
     assert pl.read_parquet(path).shape == (3, 16)
     assert pl.scan_parquet(path).collect().shape == (3, 16)
+
+
+def test_chunked_round_trip() -> None:
+    df1 = pl.DataFrame(
+        {
+            "a": [1] * 2,
+            "l": [[1] for j in range(0, 2)],
+        }
+    )
+    df2 = pl.DataFrame(
+        {
+            "a": [2] * 3,
+            "l": [[2] for j in range(0, 3)],
+        }
+    )
+
+    df = df1.vstack(df2)
+
+    f = io.BytesIO()
+    df.write_parquet(f)
+    f.seek(0)
+    assert pl.read_parquet(f).frame_equal(df)
+
+
+def test_lazy_self_join_file_cache_prop_3979(io_test_dir: str) -> None:
+    path = os.path.join(io_test_dir, "small.parquet")
+    a = pl.scan_parquet(path)
+    b = pl.DataFrame({"a": [1]}).lazy()
+
+    assert a.join(b, how="cross").collect().shape == (3, 17)
+    assert b.join(a, how="cross").collect().shape == (3, 17)
+
+
+def recursive_logical_type() -> None:
+    df = pl.DataFrame({"str": ["A", "B", "A", "B", "C"], "group": [1, 1, 2, 1, 2]})
+    df = df.with_column(pl.col("str").cast(pl.Categorical))
+
+    df_groups = df.groupby("group").agg([pl.col("str").list().alias("cat_list")])
+    f = io.BytesIO()
+    df_groups.write_parquet(f, use_pyarrow=True)
+    f.seek(0)
+    read = pl.read_parquet(f, use_pyarrow=True)
+    assert read.dtypes == [pl.Int64, pl.List(pl.Categorical)]
+    assert read.shape == (2, 2)

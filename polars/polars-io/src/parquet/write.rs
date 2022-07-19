@@ -1,4 +1,3 @@
-use super::ArrowResult;
 use arrow::array::Array;
 use arrow::chunk::Chunk;
 use arrow::datatypes::DataType as ArrowDataType;
@@ -9,49 +8,19 @@ use arrow::io::parquet::write::{self, FileWriter, *};
 use arrow::io::parquet::write::{DynIter, DynStreamingIterator, Encoding};
 use polars_core::prelude::*;
 use rayon::prelude::*;
-use std::collections::VecDeque;
 use std::io::Write;
 
+use polars_core::utils::{accumulate_dataframes_vertical_unchecked, split_df};
 pub use write::{BrotliLevel, CompressionOptions as ParquetCompression, GzipLevel, ZstdLevel};
 
-struct Bla {
-    columns: VecDeque<CompressedPage>,
-    current: Option<CompressedPage>,
-}
-
-impl Bla {
-    pub fn new(columns: VecDeque<CompressedPage>) -> Self {
-        Self {
-            columns,
-            current: None,
-        }
-    }
-}
-
-impl FallibleStreamingIterator for Bla {
-    type Item = CompressedPage;
-    type Error = ArrowError;
-
-    fn advance(&mut self) -> ArrowResult<()> {
-        self.current = self.columns.pop_front();
-        Ok(())
-    }
-
-    fn get(&self) -> Option<&Self::Item> {
-        self.current.as_ref()
-    }
-}
-
 /// Write a DataFrame to parquet format
-///
-/// # Example
-///
 ///
 #[must_use]
 pub struct ParquetWriter<W> {
     writer: W,
     compression: write::CompressionOptions,
     statistics: bool,
+    row_group_size: Option<usize>,
 }
 
 impl<W> ParquetWriter<W>
@@ -67,23 +36,41 @@ where
             writer,
             compression: write::CompressionOptions::Lz4Raw,
             statistics: false,
+            row_group_size: None,
         }
     }
 
     /// Set the compression used. Defaults to `Lz4Raw`.
+    ///
+    /// The default compression `Lz4Raw` has very good performance, but may not yet been supported
+    /// by older readers. If you want more compatability guarantees, consider using `Snappy`.
     pub fn with_compression(mut self, compression: write::CompressionOptions) -> Self {
         self.compression = compression;
         self
     }
 
+    /// Compute and write statistic
     pub fn with_statistics(mut self, statistics: bool) -> Self {
         self.statistics = statistics;
         self
     }
 
+    /// Set the row group size during writing. This can reduce memory pressure and improve
+    /// writing performance.
+    pub fn with_row_group_size(mut self, size: Option<usize>) -> Self {
+        self.row_group_size = size;
+        self
+    }
+
     /// Write the given DataFrame in the the writer `W`.
     pub fn finish(mut self, df: &mut DataFrame) -> Result<()> {
+        // ensures all chunks are aligned.
         df.rechunk();
+
+        if let Some(n) = self.row_group_size {
+            *df = accumulate_dataframes_vertical_unchecked(split_df(df, df.height() / n)?);
+        };
+
         let fields = df.schema().to_arrow().fields;
         let rb_iter = df.iter_chunks();
 
@@ -111,12 +98,8 @@ where
         let row_group_iter = rb_iter.filter_map(|batch| match batch.len() {
             0 => None,
             _ => {
-                let row_group = create_serializer(
-                    batch,
-                    parquet_schema.fields().to_vec(),
-                    encodings.clone(),
-                    options,
-                );
+                let row_group =
+                    create_serializer(batch, parquet_schema.fields().to_vec(), &encodings, options);
 
                 Some(row_group)
             }
@@ -135,7 +118,7 @@ where
 fn create_serializer(
     batch: Chunk<Box<dyn Array>>,
     fields: Vec<ParquetType>,
-    encodings: Vec<Vec<Encoding>>,
+    encodings: &[Vec<Encoding>],
     options: WriteOptions,
 ) -> std::result::Result<RowGroupIter<'static, ArrowError>, ArrowError> {
     let columns = batch
@@ -143,30 +126,32 @@ fn create_serializer(
         .par_iter()
         .zip(fields)
         .zip(encodings)
-        .flat_map(move |((array, type_), encoding)| {
+        .map(move |((array, type_), encoding)| {
             let encoded_columns = array_to_columns(array, type_, options, encoding).unwrap();
+
             encoded_columns
                 .into_iter()
                 .map(|encoded_pages| {
-                    let encoded_pages = DynIter::new(
-                        encoded_pages
-                            .into_iter()
-                            .map(|x| x.map_err(|e| ParquetError::General(e.to_string()))),
+                    // iterator over pages
+                    let pages = DynStreamingIterator::new(
+                        Compressor::new_from_vec(
+                            encoded_pages.map(|result| {
+                                result.map_err(|e| ParquetError::General(format!("{}", e)))
+                            }),
+                            options.compression,
+                            vec![],
+                        )
+                        .map_err(|e| ArrowError::External(format!("{}", e), Box::new(e))),
                     );
-                    encoded_pages
-                        .map(|page| {
-                            compress(page?, vec![], options.compression).map_err(|x| x.into())
-                        })
-                        .collect::<ArrowResult<VecDeque<_>>>()
+
+                    Ok(pages)
                 })
                 .collect::<Vec<_>>()
         })
-        .collect::<ArrowResult<Vec<VecDeque<CompressedPage>>>>()?;
+        .flatten()
+        .collect::<Vec<_>>();
 
-    let row_group = DynIter::new(
-        columns
-            .into_iter()
-            .map(|column| Ok(DynStreamingIterator::new(Bla::new(column)))),
-    );
+    let row_group = DynIter::new(columns.into_iter());
+
     Ok(row_group)
 }

@@ -62,7 +62,7 @@ impl Series {
             #[cfg(feature = "dtype-categorical")]
             Categorical(rev_map) => {
                 let cats = UInt32Chunked::from_chunks(name, chunks);
-                CategoricalChunked::from_cats_and_rev_map(cats, rev_map.clone().unwrap())
+                CategoricalChunked::from_cats_and_rev_map_unchecked(cats, rev_map.clone().unwrap())
                     .into_series()
             }
             Boolean => BooleanChunked::from_chunks(name, chunks).into_series(),
@@ -90,10 +90,10 @@ impl Series {
         match dtype {
             ArrowDataType::LargeUtf8 => Ok(Utf8Chunked::from_chunks(name, chunks).into_series()),
             ArrowDataType::Utf8 => {
-                let chunks = cast_chunks(&chunks, &DataType::Utf8).unwrap();
+                let chunks = cast_chunks(&chunks, &DataType::Utf8, false).unwrap();
                 Ok(Utf8Chunked::from_chunks(name, chunks).into_series())
             }
-            ArrowDataType::List(_) => {
+            ArrowDataType::List(_) | ArrowDataType::LargeList(_) => {
                 let chunks = chunks.iter().map(convert_inner_types).collect();
                 Ok(ListChunked::from_chunks(name, chunks).into_series())
             }
@@ -110,18 +110,22 @@ impl Series {
             ArrowDataType::Int16 => Ok(Int16Chunked::from_chunks(name, chunks).into_series()),
             ArrowDataType::Int32 => Ok(Int32Chunked::from_chunks(name, chunks).into_series()),
             ArrowDataType::Int64 => Ok(Int64Chunked::from_chunks(name, chunks).into_series()),
+            ArrowDataType::Float16 => {
+                let chunks = cast_chunks(&chunks, &DataType::Float32, false).unwrap();
+                Ok(Float32Chunked::from_chunks(name, chunks).into_series())
+            }
             ArrowDataType::Float32 => Ok(Float32Chunked::from_chunks(name, chunks).into_series()),
             ArrowDataType::Float64 => Ok(Float64Chunked::from_chunks(name, chunks).into_series()),
             #[cfg(feature = "dtype-date")]
             ArrowDataType::Date32 => {
-                let chunks = cast_chunks(&chunks, &DataType::Int32).unwrap();
+                let chunks = cast_chunks(&chunks, &DataType::Int32, false).unwrap();
                 Ok(Int32Chunked::from_chunks(name, chunks)
                     .into_date()
                     .into_series())
             }
             #[cfg(feature = "dtype-datetime")]
             ArrowDataType::Date64 => {
-                let chunks = cast_chunks(&chunks, &DataType::Int64).unwrap();
+                let chunks = cast_chunks(&chunks, &DataType::Int64, false).unwrap();
                 let ca = Int64Chunked::from_chunks(name, chunks);
                 Ok(ca.into_datetime(TimeUnit::Milliseconds, None).into_series())
             }
@@ -132,7 +136,7 @@ impl Series {
                     tz = None;
                 }
                 // we still drop timezone for now
-                let chunks = cast_chunks(&chunks, &DataType::Int64).unwrap();
+                let chunks = cast_chunks(&chunks, &DataType::Int64, false).unwrap();
                 let s = Int64Chunked::from_chunks(name, chunks)
                     .into_datetime(tu.into(), tz)
                     .into_series();
@@ -145,7 +149,7 @@ impl Series {
             }
             #[cfg(feature = "dtype-duration")]
             ArrowDataType::Duration(tu) => {
-                let chunks = cast_chunks(&chunks, &DataType::Int64).unwrap();
+                let chunks = cast_chunks(&chunks, &DataType::Int64, false).unwrap();
                 let s = Int64Chunked::from_chunks(name, chunks)
                     .into_duration(tu.into())
                     .into_series();
@@ -160,9 +164,9 @@ impl Series {
             ArrowDataType::Time64(tu) | ArrowDataType::Time32(tu) => {
                 let mut chunks = chunks;
                 if matches!(dtype, ArrowDataType::Time32(_)) {
-                    chunks = cast_chunks(&chunks, &DataType::Int32).unwrap();
+                    chunks = cast_chunks(&chunks, &DataType::Int32, false).unwrap();
                 }
-                let chunks = cast_chunks(&chunks, &DataType::Int64).unwrap();
+                let chunks = cast_chunks(&chunks, &DataType::Int64, false).unwrap();
                 let s = Int64Chunked::from_chunks(name, chunks)
                     .into_time()
                     .into_series();
@@ -172,10 +176,6 @@ impl Series {
                     ArrowTimeUnit::Microsecond => &s * 1_000,
                     ArrowTimeUnit::Nanosecond => s,
                 })
-            }
-            ArrowDataType::LargeList(_) => {
-                let chunks = chunks.iter().map(convert_inner_types).collect();
-                Ok(ListChunked::from_chunks(name, chunks).into_series())
             }
             ArrowDataType::Null => {
                 // we don't support null types yet so we use a small digit type filled with nulls
@@ -243,12 +243,9 @@ impl Series {
                 let keys = keys.as_any().downcast_ref::<PrimitiveArray<u32>>().unwrap();
                 let values = values.as_any().downcast_ref::<Utf8Array<i64>>().unwrap();
 
-                let mut builder = CategoricalChunkedBuilder::new(name, keys.len());
-                let iter = keys
-                    .into_iter()
-                    .map(|opt_key| opt_key.map(|k| values.value_unchecked(*k as usize)));
-                builder.drain_iter(iter);
-                Ok(builder.finish().into_series())
+                // Safety
+                // the invariants of an Arrow Dictionary guarantee the keys are in bounds
+                Ok(CategoricalChunked::from_keys_and_values(name, keys, values).into_series())
             }
             #[cfg(not(feature = "dtype-u8"))]
             ArrowDataType::LargeBinary | ArrowDataType::Binary => {

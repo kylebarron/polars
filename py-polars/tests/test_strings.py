@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import pytest
+
 import polars as pl
 
 
@@ -20,10 +24,111 @@ def test_auto_explode() -> None:
     assert grouped.dtype == pl.Utf8
 
 
+def test_contains() -> None:
+    df = pl.DataFrame(
+        data=[(1, "some * * text"), (2, "(with) special\n * chars"), (3, "**etc...?$")],
+        columns=["idx", "text"],
+    )
+    for pattern, as_literal, expected in (
+        (r"\* \*", False, [True, False, False]),
+        (r"* *", True, [True, False, False]),
+        (r"^\(", False, [False, True, False]),
+        (r"^\(", True, [False, False, False]),
+        (r"(", True, [False, True, False]),
+        (r"e", False, [True, True, True]),
+        (r"e", True, [True, True, True]),
+        (r"^\S+$", False, [False, False, True]),
+        (r"\?\$", False, [False, False, True]),
+        (r"?$", True, [False, False, True]),
+    ):
+        # series
+        assert (
+            expected == df["text"].str.contains(pattern, literal=as_literal).to_list()
+        )
+        # frame select
+        assert (
+            expected
+            == df.select(pl.col("text").str.contains(pattern, literal=as_literal))[
+                "text"
+            ].to_list()
+        )
+        # frame filter
+        assert sum(expected) == len(
+            df.filter(pl.col("text").str.contains(pattern, literal=as_literal))
+        )
+
+
 def test_null_comparisons() -> None:
     s = pl.Series("s", [None, "str", "a"])
     assert (s.shift() == s).null_count() == 0
     assert (s.shift() != s).null_count() == 0
+
+
+def test_replace() -> None:
+    df = pl.DataFrame(
+        data=[(1, "* * text"), (2, "(with) special\n * chars **etc...?$")],
+        columns=["idx", "text"],
+        orient="row",
+    )
+    for pattern, replacement, as_literal, expected in (
+        (r"\*", "-", False, ["- * text", "(with) special\n - chars **etc...?$"]),
+        (r"*", "-", True, ["- * text", "(with) special\n - chars **etc...?$"]),
+        (r"^\(", "[", False, ["* * text", "[with) special\n * chars **etc...?$"]),
+        (r"^\(", "[", True, ["* * text", "(with) special\n * chars **etc...?$"]),
+        (r"t$", "an", False, ["* * texan", "(with) special\n * chars **etc...?$"]),
+        (r"t$", "an", True, ["* * text", "(with) special\n * chars **etc...?$"]),
+    ):
+        # series
+        assert (
+            expected
+            == df["text"]
+            .str.replace(pattern, replacement, literal=as_literal)
+            .to_list()
+        )
+        # expr
+        assert (
+            expected
+            == df.select(
+                pl.col("text").str.replace(pattern, replacement, literal=as_literal)
+            )["text"].to_list()
+        )
+
+
+def test_replace_all() -> None:
+    df = pl.DataFrame(
+        data=[(1, "* * text"), (2, "(with) special * chars **etc...?$")],
+        columns=["idx", "text"],
+        orient="row",
+    )
+    for pattern, replacement, as_literal, expected in (
+        (r"\*", "-", False, ["- - text", "(with) special - chars --etc...?$"]),
+        (r"*", "-", True, ["- - text", "(with) special - chars --etc...?$"]),
+        (r"\W", "", False, ["text", "withspecialcharsetc"]),
+        (r".?$", "", True, ["* * text", "(with) special * chars **etc.."]),
+        (
+            r"(\b)[\w\s]{2,}(\b)",
+            "$1(blah)$3",
+            False,
+            ["* * (blah)", "((blah)) (blah) * (blah) **(blah)...?$"],
+        ),
+    ):
+        # series
+        assert (
+            expected
+            == df["text"]
+            .str.replace_all(pattern, replacement, literal=as_literal)
+            .to_list()
+        )
+        # expr
+        assert (
+            expected
+            == df.select(
+                pl.col("text").str.replace_all(pattern, replacement, literal=as_literal)
+            )["text"].to_list()
+        )
+        # invalid regex (but valid literal - requires "literal=True")
+        with pytest.raises(pl.ComputeError):
+            df["text"].str.replace_all("*", "")
 
 
 def test_extract_all_count() -> None:
@@ -100,3 +205,12 @@ def test_format_empty_df() -> None:
     )
     assert df.shape == (0, 1)
     assert df.dtypes == [pl.Utf8]
+
+
+def test_starts_ends_with() -> None:
+    assert pl.DataFrame({"a": ["hamburger", "nuts", "lollypop"]}).select(
+        [
+            pl.col("a").str.ends_with("pop").alias("pop"),
+            pl.col("a").str.starts_with("ham").alias("ham"),
+        ]
+    ).to_dict(False) == {"pop": [False, False, True], "ham": [True, False, False]}

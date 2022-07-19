@@ -208,8 +208,9 @@ impl PyDataFrame {
         columns: Option<Vec<String>>,
         projection: Option<Vec<usize>>,
         n_rows: Option<usize>,
-        parallel: bool,
+        parallel: Wrap<ParallelStrategy>,
         row_count: Option<(String, IdxSize)>,
+        low_memory: bool,
     ) -> PyResult<Self> {
         use EitherRustPythonFile::*;
 
@@ -220,15 +221,16 @@ impl PyDataFrame {
                 ParquetReader::new(buf)
                     .with_projection(projection)
                     .with_columns(columns)
-                    .read_parallel(parallel)
+                    .read_parallel(parallel.0)
                     .with_n_rows(n_rows)
                     .with_row_count(row_count)
+                    .set_low_memory(low_memory)
                     .finish()
             }
-            Rust(f) => ParquetReader::new(f)
+            Rust(f) => ParquetReader::new(f.into_inner())
                 .with_projection(projection)
                 .with_columns(columns)
-                .read_parallel(parallel)
+                .read_parallel(parallel.0)
                 .with_n_rows(n_rows)
                 .with_row_count(row_count)
                 .finish(),
@@ -290,7 +292,6 @@ impl PyDataFrame {
 
         if let Ok(s) = py_f.extract::<&str>(py) {
             let f = std::fs::File::create(s).unwrap();
-            let f = BufWriter::new(f);
             AvroWriter::new(f)
                 .with_compression(compression)
                 .finish(&mut self.df)
@@ -460,7 +461,6 @@ impl PyDataFrame {
 
         if let Ok(s) = py_f.extract::<&str>(py) {
             let f = std::fs::File::create(s).unwrap();
-            let f = BufWriter::new(f);
             IpcWriter::new(f)
                 .with_compression(compression)
                 .finish(&mut self.df)
@@ -570,6 +570,7 @@ impl PyDataFrame {
         compression: &str,
         compression_level: Option<i32>,
         statistics: bool,
+        row_group_size: Option<usize>,
     ) -> PyResult<()> {
         let compression = match compression {
             "uncompressed" => ParquetCompression::Uncompressed,
@@ -605,10 +606,10 @@ impl PyDataFrame {
 
         if let Ok(s) = py_f.extract::<&str>(py) {
             let f = std::fs::File::create(s).unwrap();
-            let f = BufWriter::new(f);
             ParquetWriter::new(f)
                 .with_compression(compression)
                 .with_statistics(statistics)
+                .with_row_group_size(row_group_size)
                 .finish(&mut self.df)
                 .map_err(PyPolarsErr::from)?;
         } else {
@@ -616,6 +617,7 @@ impl PyDataFrame {
             ParquetWriter::new(buf)
                 .with_compression(compression)
                 .with_statistics(statistics)
+                .with_row_group_size(row_group_size)
                 .finish(&mut self.df)
                 .map_err(PyPolarsErr::from)?;
         }
@@ -992,8 +994,10 @@ impl PyDataFrame {
         Ok(())
     }
 
-    pub fn slice(&self, offset: usize, length: usize) -> Self {
-        let df = self.df.slice(offset as i64, length);
+    pub fn slice(&self, offset: usize, length: Option<usize>) -> Self {
+        let df = self
+            .df
+            .slice(offset as i64, length.unwrap_or(self.df.height()));
         df.into()
     }
 

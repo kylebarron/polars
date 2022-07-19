@@ -1,4 +1,4 @@
-from typing import List, Union
+from __future__ import annotations
 
 import pytest
 
@@ -38,8 +38,8 @@ def test_sort_by() -> None:
         {"a": [1, 2, 3, 4, 5], "b": [1, 1, 1, 2, 2], "c": [2, 3, 1, 2, 1]}
     )
 
-    by: List[Union[pl.Expr, str]]
-    for by in [["b", "c"], [pl.col("b"), "c"]]:  # type: ignore
+    by: list[pl.Expr | str]
+    for by in [["b", "c"], [pl.col("b"), "c"]]:  # type: ignore[assignment]
         out = df.select([pl.col("a").sort_by(by)])
         assert out["a"].to_list() == [3, 1, 2, 5, 4]
 
@@ -94,8 +94,6 @@ def test_argsort_nulls() -> None:
         None,
         None,
     ]
-    with pytest.raises(ValueError):
-        a.to_frame().sort(by=["a", "b"], nulls_last=True)
 
 
 def test_argsort_window_functions() -> None:
@@ -110,3 +108,26 @@ def test_argsort_window_functions() -> None:
     assert (
         out["arg_sort"].to_list() == out["argsort_by"].to_list() == [0, 1, 0, 1, 0, 1]
     )
+
+
+def test_sort_nans_3740() -> None:
+    df = pl.DataFrame(
+        {
+            "key": [1, 2, 3, 4, 5],
+            "val": [0.0, None, float("nan"), float("-inf"), float("inf")],
+        }
+    )
+    assert df.sort("val")["key"].to_list() == [2, 4, 1, 5, 3]
+
+
+def test_sort_by_exps_nulls_last() -> None:
+    df = pl.DataFrame(
+        {
+            "a": [1, 3, -2, None, 1],
+        }
+    ).with_row_count()
+
+    assert df.sort(pl.col("a") ** 2, nulls_last=True).to_dict(False) == {
+        "row_nr": [0, 4, 2, 1, 3],
+        "a": [1, 1, -2, 3, None],
+    }

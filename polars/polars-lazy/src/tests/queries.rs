@@ -11,17 +11,8 @@ fn test_lazy_with_column() {
         .with_column(lit(10).alias("foo"))
         .collect()
         .unwrap();
-    println!("{:?}", df);
     assert_eq!(df.width(), 6);
     assert!(df.column("foo").is_ok());
-
-    let df = get_df()
-        .lazy()
-        .with_column(lit(10).alias("foo"))
-        .select([col("foo"), col("sepal.width")])
-        .collect()
-        .unwrap();
-    println!("{:?}", df);
 }
 
 #[test]
@@ -33,7 +24,6 @@ fn test_lazy_exec() {
         .select([col("sepal.width"), col("variety")])
         .sort("sepal.width", Default::default())
         .collect();
-    println!("{:?}", new);
 
     let new = df
         .lazy()
@@ -135,7 +125,6 @@ fn test_lazy_is_null() {
         .collect()
         .unwrap();
 
-    println!("{:?}", new);
     assert_eq!(new.shape(), (1, 2));
 }
 
@@ -156,7 +145,9 @@ fn test_lazy_pushdown_through_agg() {
         .collect()
         .unwrap();
 
-    println!("{:?}", new);
+    assert_eq!(new.shape(), (1, 1));
+    let bar = new.column("bar").unwrap();
+    assert_eq!(bar.get(0), AnyValue::Float64(1.3));
 }
 
 #[test]
@@ -191,7 +182,8 @@ fn test_lazy_agg() {
         .sort("date", Default::default());
 
     let new = lf.collect().unwrap();
-    dbg!(new);
+    let min = new.column("min").unwrap();
+    assert_eq!(min, &Series::new("min", [0.1f64, 0.01, 0.1]));
 }
 
 #[test]
@@ -244,7 +236,9 @@ fn test_lazy_ternary_and_predicates() {
         .filter(col("foo").gt(lit(3.0)));
 
     let new = ldf.collect().unwrap();
-    dbg!(new);
+    let length = new.column("sepal.length").unwrap();
+    assert_eq!(length, &Series::new("sepal.length", &[5.1f64, 5.0, 5.4]));
+    assert_eq!(new.shape(), (3, 6));
 }
 
 #[test]
@@ -611,12 +605,6 @@ fn test_lazy_reverse() {
         .collect()
         .unwrap()
         .frame_equal_missing(&df.reverse()))
-}
-
-#[test]
-fn test_lazy_update_column() {
-    let df = load_df();
-    df.lazy().with_column(col("a") / lit(10)).collect().unwrap();
 }
 
 #[test]
@@ -1688,7 +1676,7 @@ fn test_groupby_rank() -> Result<()> {
 fn test_apply_multiple_columns() -> Result<()> {
     let df = fruits_cars();
 
-    let multiply = |s: &mut [Series]| Ok(&s[0].pow(2.0).unwrap() * &s[1]);
+    let multiply = |s: &mut [Series]| Ok(&(&s[0] * &s[0]) * &s[1]);
 
     let out = df
         .clone()
@@ -1700,10 +1688,10 @@ fn test_apply_multiple_columns() -> Result<()> {
         )])
         .collect()?;
     let out = out.column("A")?;
-    let out = out.f64()?;
+    let out = out.i32()?;
     assert_eq!(
         Vec::from(out),
-        &[Some(5.0), Some(16.0), Some(27.0), Some(32.0), Some(25.0)]
+        &[Some(5), Some(16), Some(27), Some(32), Some(25)]
     );
 
     let out = df
@@ -1718,9 +1706,9 @@ fn test_apply_multiple_columns() -> Result<()> {
 
     let out = out.column("A")?;
     let out = out.list()?.get(1).unwrap();
-    let out = out.f64()?;
+    let out = out.i32()?;
 
-    assert_eq!(Vec::from(out), &[Some(16.0)]);
+    assert_eq!(Vec::from(out), &[Some(16)]);
     Ok(())
 }
 
@@ -1958,7 +1946,7 @@ fn test_is_in() -> Result<()> {
 }
 
 #[test]
-fn test_partitioned_gb() -> Result<()> {
+fn test_partitioned_gb_1() -> Result<()> {
     // don't move these to integration tests
     // keep these dtypes
     let out = df![

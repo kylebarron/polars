@@ -153,9 +153,8 @@ fn test_parquet_globbing() -> Result<()> {
         ScanArgsParquet {
             n_rows: None,
             cache: true,
-            parallel: true,
-            rechunk: false,
-            row_count: None,
+            parallel: Default::default(),
+            ..Default::default()
         },
     )?
     .collect()?;

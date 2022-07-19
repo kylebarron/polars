@@ -363,6 +363,54 @@ impl PyExpr {
         self.clone().inner.abs().into()
     }
 
+    pub fn sin(&self) -> PyExpr {
+        self.clone().inner.sin().into()
+    }
+
+    pub fn cos(&self) -> PyExpr {
+        self.clone().inner.cos().into()
+    }
+
+    pub fn tan(&self) -> PyExpr {
+        self.clone().inner.tan().into()
+    }
+
+    pub fn arcsin(&self) -> PyExpr {
+        self.clone().inner.arcsin().into()
+    }
+
+    pub fn arccos(&self) -> PyExpr {
+        self.clone().inner.arccos().into()
+    }
+
+    pub fn arctan(&self) -> PyExpr {
+        self.clone().inner.arctan().into()
+    }
+
+    pub fn sinh(&self) -> PyExpr {
+        self.clone().inner.sinh().into()
+    }
+
+    pub fn cosh(&self) -> PyExpr {
+        self.clone().inner.cosh().into()
+    }
+
+    pub fn tanh(&self) -> PyExpr {
+        self.clone().inner.tanh().into()
+    }
+
+    pub fn arcsinh(&self) -> PyExpr {
+        self.clone().inner.arcsinh().into()
+    }
+
+    pub fn arccosh(&self) -> PyExpr {
+        self.clone().inner.arccosh().into()
+    }
+
+    pub fn arctanh(&self) -> PyExpr {
+        self.clone().inner.arctanh().into()
+    }
+
     pub fn is_duplicated(&self) -> PyExpr {
         self.clone().inner.is_duplicated().into()
     }
@@ -543,10 +591,14 @@ impl PyExpr {
             .into()
     }
 
-    pub fn str_replace(&self, pat: String, val: String) -> PyExpr {
+    pub fn str_replace(&self, pat: String, val: String, literal: Option<bool>) -> PyExpr {
         let function = move |s: Series| {
             let ca = s.utf8()?;
-            match ca.replace(&pat, &val) {
+            let replaced = match literal {
+                Some(true) => ca.replace_literal(&pat, &val),
+                _ => ca.replace(&pat, &val),
+            };
+            match replaced {
                 Ok(ca) => Ok(ca.into_series()),
                 Err(e) => Err(PolarsError::ComputeError(format!("{:?}", e).into())),
             }
@@ -558,10 +610,14 @@ impl PyExpr {
             .into()
     }
 
-    pub fn str_replace_all(&self, pat: String, val: String) -> PyExpr {
+    pub fn str_replace_all(&self, pat: String, val: String, literal: Option<bool>) -> PyExpr {
         let function = move |s: Series| {
             let ca = s.utf8()?;
-            match ca.replace_all(&pat, &val) {
+            let replaced = match literal {
+                Some(true) => ca.replace_literal_all(&pat, &val),
+                _ => ca.replace_all(&pat, &val),
+            };
+            match replaced {
                 Ok(ca) => Ok(ca.into_series()),
                 Err(e) => Err(PolarsError::ComputeError(format!("{:?}", e).into())),
             }
@@ -585,20 +641,21 @@ impl PyExpr {
         self.clone().inner.str().rjust(width, fillchar).into()
     }
 
-    pub fn str_contains(&self, pat: String) -> PyExpr {
-        let function = move |s: Series| {
-            let ca = s.utf8()?;
-            match ca.contains(&pat) {
-                Ok(ca) => Ok(ca.into_series()),
-                Err(e) => Err(PolarsError::ComputeError(format!("{:?}", e).into())),
-            }
-        };
-        self.clone()
-            .inner
-            .map(function, GetOutput::from_type(DataType::Boolean))
-            .with_fmt("str.contains")
-            .into()
+    pub fn str_contains(&self, pat: String, literal: Option<bool>) -> PyExpr {
+        match literal {
+            Some(true) => self.inner.clone().str().contains_literal(pat).into(),
+            _ => self.inner.clone().str().contains(pat).into(),
+        }
     }
+
+    pub fn str_ends_with(&self, sub: String) -> PyExpr {
+        self.inner.clone().str().ends_with(sub).into()
+    }
+
+    pub fn str_starts_with(&self, sub: String) -> PyExpr {
+        self.inner.clone().str().starts_with(sub).into()
+    }
+
     pub fn str_hex_encode(&self) -> PyExpr {
         self.clone()
             .inner
@@ -691,6 +748,9 @@ impl PyExpr {
     pub fn year(&self) -> PyExpr {
         self.clone().inner.dt().year().into()
     }
+    pub fn quarter(&self) -> PyExpr {
+        self.clone().inner.dt().quarter().into()
+    }
     pub fn month(&self) -> PyExpr {
         self.clone().inner.dt().month().into()
     }
@@ -777,6 +837,12 @@ impl PyExpr {
     pub fn timestamp(&self, tu: Wrap<TimeUnit>) -> PyExpr {
         self.inner.clone().dt().timestamp(tu.0).into()
     }
+
+    pub fn dt_offset_by(&self, by: &str) -> PyExpr {
+        let by = Duration::parse(by);
+        self.inner.clone().dt().offset_by(by).into()
+    }
+
     pub fn dt_epoch_seconds(&self) -> PyExpr {
         self.clone()
             .inner
@@ -1453,8 +1519,8 @@ impl PyExpr {
     pub fn entropy(&self, base: f64, normalize: bool) -> Self {
         self.inner.clone().entropy(base, normalize).into()
     }
-    pub fn hash(&self, seed: usize) -> Self {
-        self.inner.clone().hash(seed).into()
+    pub fn hash(&self, seed: u64, seed_1: u64, seed_2: u64, seed_3: u64) -> Self {
+        self.inner.clone().hash(seed, seed_1, seed_2, seed_3).into()
     }
 }
 

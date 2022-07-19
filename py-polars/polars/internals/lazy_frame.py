@@ -1,6 +1,8 @@
 """
 This module contains all expressions and classes needed for lazy computation/ query execution.
 """
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
@@ -9,40 +11,30 @@ import tempfile
 import warnings
 from io import BytesIO, IOBase, StringIO
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generic,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import Any, Callable, Generic, Sequence, TypeVar, overload
 
 if sys.version_info >= (3, 8):
     from typing import Literal
 else:
-    from typing_extensions import Literal  # pragma: no cover
+    from typing_extensions import Literal
 
 try:
     from polars.polars import PyExpr, PyLazyFrame, PyLazyGroupBy
 
     _DOCUMENTING = False
-except ImportError:  # pragma: no cover
+except ImportError:
     _DOCUMENTING = True
 
 
 from polars import internals as pli
+from polars.cfg import Config
 from polars.datatypes import DataType, py_type_to_dtype
+from polars.internals.functions import LazyPolarsSlice
 from polars.utils import (
     _in_notebook,
     _prepare_row_count_args,
     _process_null_values,
+    deprecated_alias,
     format_path,
 )
 
@@ -50,7 +42,7 @@ try:
     import pyarrow as pa
 
     _PYARROW_AVAILABLE = True
-except ImportError:  # pragma: no cover
+except ImportError:
     _PYARROW_AVAILABLE = False
 
 # Used to type any type or subclass of LazyFrame.
@@ -64,13 +56,13 @@ LDF = TypeVar("LDF", bound="LazyFrame")
 DF = TypeVar("DF", bound="pli.DataFrame")
 
 
-def wrap_ldf(ldf: "PyLazyFrame") -> "LazyFrame":
+def wrap_ldf(ldf: PyLazyFrame) -> LazyFrame:
     return LazyFrame._from_pyldf(ldf)
 
 
 def _prepare_groupby_inputs(
-    by: Optional[Union[str, List[str], "pli.Expr", List["pli.Expr"]]],
-) -> List["PyExpr"]:
+    by: str | list[str] | pli.Expr | list[pli.Expr] | None,
+) -> list[PyExpr]:
     if isinstance(by, list):
         new_by = []
         for e in by:
@@ -95,13 +87,13 @@ class LazyFrame(Generic[DF]):
         self._ldf: PyLazyFrame
 
     @classmethod
-    def _from_pyldf(cls: Type[LDF], ldf: "PyLazyFrame") -> LDF:
+    def _from_pyldf(cls: type[LDF], ldf: PyLazyFrame) -> LDF:
         self = cls.__new__(cls)
         self._ldf = ldf
         return self
 
     @property
-    def _dataframe_class(self) -> Type[DF]:
+    def _dataframe_class(self) -> type[DF]:
         """
         Return the associated DataFrame which is the equivalent of this LazyFrame object.
 
@@ -115,36 +107,38 @@ class LazyFrame(Generic[DF]):
         This property is dynamically overwritten when DataFrame is sub-classed. See
         `polars.internals.frame.DataFrameMetaClass.__init__` for implementation details.
         """
-        return pli.DataFrame  # type: ignore
+        return pli.DataFrame  # type: ignore[return-value]
 
     @classmethod
     def scan_csv(
-        cls: Type[LDF],
+        cls: type[LDF],
         file: str,
         has_header: bool = True,
         sep: str = ",",
-        comment_char: Optional[str] = None,
-        quote_char: Optional[str] = r'"',
+        comment_char: str | None = None,
+        quote_char: str | None = r'"',
         skip_rows: int = 0,
-        dtypes: Optional[Dict[str, Type[DataType]]] = None,
-        null_values: Optional[Union[str, List[str], Dict[str, str]]] = None,
+        dtypes: dict[str, type[DataType]] | None = None,
+        null_values: str | list[str] | dict[str, str] | None = None,
         ignore_errors: bool = False,
         cache: bool = True,
-        with_column_names: Optional[Callable[[List[str]], List[str]]] = None,
-        infer_schema_length: Optional[int] = 100,
-        n_rows: Optional[int] = None,
+        with_column_names: Callable[[list[str]], list[str]] | None = None,
+        infer_schema_length: int | None = 100,
+        n_rows: int | None = None,
         encoding: str = "utf8",
         low_memory: bool = False,
         rechunk: bool = True,
         skip_rows_after_header: int = 0,
-        row_count_name: Optional[str] = None,
+        row_count_name: str | None = None,
         row_count_offset: int = 0,
         parse_dates: bool = False,
     ) -> LDF:
         """
-        See Also: `pl.scan_csv`
+        See Also
+        --------
+        scan_csv
         """
-        dtype_list: Optional[List[Tuple[str, Type[DataType]]]] = None
+        dtype_list: list[tuple[str, type[DataType]]] | None = None
         if dtypes is not None:
             dtype_list = []
             for k, v in dtypes.items():
@@ -177,18 +171,21 @@ class LazyFrame(Generic[DF]):
 
     @classmethod
     def scan_parquet(
-        cls: Type[LDF],
+        cls: type[LDF],
         file: str,
-        n_rows: Optional[int] = None,
+        n_rows: int | None = None,
         cache: bool = True,
-        parallel: bool = True,
+        parallel: str = "auto",
         rechunk: bool = True,
-        row_count_name: Optional[str] = None,
+        row_count_name: str | None = None,
         row_count_offset: int = 0,
-        storage_options: Optional[Dict] = None,
+        storage_options: dict | None = None,
+        low_memory: bool = False,
     ) -> LDF:
         """
-        See Also: `pl.scan_parquet`
+        See Also
+        --------
+        scan_ipc, scan_csv
         """
 
         # try fsspec scanner
@@ -198,7 +195,7 @@ class LazyFrame(Generic[DF]):
                 scan = scan.head(n_rows)
             if row_count_name is not None:
                 scan = scan.with_row_count(row_count_name, row_count_offset)
-            return scan  # type: ignore
+            return scan  # type: ignore[return-value]
 
         self = cls.__new__(cls)
         self._ldf = PyLazyFrame.new_from_parquet(
@@ -208,22 +205,25 @@ class LazyFrame(Generic[DF]):
             parallel,
             rechunk,
             _prepare_row_count_args(row_count_name, row_count_offset),
+            low_memory,
         )
         return self
 
     @classmethod
     def scan_ipc(
-        cls: Type[LDF],
-        file: Union[str, Path],
-        n_rows: Optional[int] = None,
+        cls: type[LDF],
+        file: str | Path,
+        n_rows: int | None = None,
         cache: bool = True,
         rechunk: bool = True,
-        row_count_name: Optional[str] = None,
+        row_count_name: str | None = None,
         row_count_offset: int = 0,
-        storage_options: Optional[Dict] = None,
+        storage_options: dict | None = None,
     ) -> LDF:
         """
-        See Also: `pl.scan_ipc`
+        See Also
+        --------
+        scan_parquet, scan_csv
         """
         if isinstance(file, (str, Path)):
             file = format_path(file)
@@ -235,7 +235,7 @@ class LazyFrame(Generic[DF]):
                 scan = scan.head(n_rows)
             if row_count_name is not None:
                 scan = scan.with_row_count(row_count_name, row_count_offset)
-            return scan  # type: ignore
+            return scan  # type: ignore[return-value]
 
         self = cls.__new__(cls)
         self._ldf = PyLazyFrame.new_from_ipc(
@@ -248,9 +248,11 @@ class LazyFrame(Generic[DF]):
         return self
 
     @classmethod
-    def from_json(cls, json: str) -> "LazyFrame":
+    def from_json(cls, json: str) -> LazyFrame:
         """
-        See Also pl.read_json
+        See Also
+        --------
+        read_json
         """
         f = StringIO(json)
         return cls.read_json(f)
@@ -258,10 +260,14 @@ class LazyFrame(Generic[DF]):
     @classmethod
     def read_json(
         cls,
-        file: Union[str, Path, IOBase],
-    ) -> "LazyFrame":
+        file: str | Path | IOBase,
+    ) -> LazyFrame:
         """
-        See Also pl.read_json
+        Read into a DataFrame from JSON format.
+
+        See Also
+        --------
+        write_json
         """
         if isinstance(file, StringIO):
             file = BytesIO(file.getvalue().encode())
@@ -273,7 +279,7 @@ class LazyFrame(Generic[DF]):
     @overload
     def write_json(
         self,
-        file: Optional[Union[IOBase, str, Path]] = ...,
+        file: IOBase | str | Path | None = ...,
         *,
         to_string: Literal[True],
     ) -> str:
@@ -282,7 +288,7 @@ class LazyFrame(Generic[DF]):
     @overload
     def write_json(
         self,
-        file: Optional[Union[IOBase, str, Path]] = ...,
+        file: IOBase | str | Path | None = ...,
         *,
         to_string: Literal[False] = ...,
     ) -> None:
@@ -291,18 +297,18 @@ class LazyFrame(Generic[DF]):
     @overload
     def write_json(
         self,
-        file: Optional[Union[IOBase, str, Path]] = ...,
+        file: IOBase | str | Path | None = ...,
         *,
         to_string: bool = ...,
-    ) -> Optional[str]:
+    ) -> str | None:
         ...
 
     def write_json(
         self,
-        file: Optional[Union[IOBase, str, Path]] = None,
+        file: IOBase | str | Path | None = None,
         *,
         to_string: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Serialize LogicalPlan to JSON representation.
 
@@ -312,6 +318,10 @@ class LazyFrame(Generic[DF]):
             Write to this file instead of returning a string.
         to_string
             Ignore file argument and return a string.
+
+        See Also
+        --------
+        read_json
         """
         if isinstance(file, (str, Path)):
             file = format_path(file)
@@ -332,8 +342,8 @@ class LazyFrame(Generic[DF]):
 
     @classmethod
     def _scan_python_function(
-        cls, schema: Union["pa.schema", Dict[str, Type[DataType]]], scan_fn: bytes
-    ) -> "LazyFrame":
+        cls, schema: pa.schema | dict[str, type[DataType]], scan_fn: bytes
+    ) -> LazyFrame:
         self = cls.__new__(cls)
         if isinstance(schema, dict):
             self._ldf = PyLazyFrame.scan_from_python_function_pl_schema(
@@ -345,10 +355,15 @@ class LazyFrame(Generic[DF]):
             )
         return self
 
-    def __getitem__(self, item: Union[int, range, slice]) -> None:
-        raise TypeError(
-            "'LazyFrame' object is not subscriptable. Use 'select()' or 'filter()' instead."
-        )
+    def __getitem__(self: LDF, item: int | range | slice) -> LazyFrame:
+        if not isinstance(item, slice):
+            raise TypeError(
+                "'LazyFrame' object is not subscriptable (aside from slicing). Use 'select()' or 'filter()' instead."
+            )
+        return LazyPolarsSlice(self).apply(item)
+
+    def __contains__(self: LDF, key: str) -> bool:
+        return key in self.columns
 
     def pipe(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """
@@ -365,7 +380,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> def cast_str_to_int(data, col_name):
         ...     return data.with_column(pl.col(col_name).cast(pl.Int64))
         ...
@@ -441,10 +455,10 @@ class LazyFrame(Generic[DF]):
         self,
         optimized: bool = True,
         show: bool = True,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
         raw_output: bool = False,
-        figsize: Tuple[float, float] = (16.0, 12.0),
-    ) -> Optional[str]:
+        figsize: tuple[float, float] = (16.0, 12.0),
+    ) -> str | None:
         """
         Show a plot of the query plan. Note that you should have graphviz installed.
 
@@ -531,8 +545,8 @@ class LazyFrame(Generic[DF]):
 
     def sort(
         self: LDF,
-        by: Union[str, "pli.Expr", List[str], List["pli.Expr"]],
-        reverse: Union[bool, List[bool]] = False,
+        by: str | pli.Expr | list[str] | list[pli.Expr],
+        reverse: bool | list[bool] = False,
         nulls_last: bool = False,
     ) -> LDF:
         """
@@ -551,17 +565,13 @@ class LazyFrame(Generic[DF]):
         nulls_last
             Place null values last. Can only be used if sorted by a single column.
         """
-        if nulls_last and not isinstance(by, str):
-            raise ValueError(
-                "nulls_last can only be combined with 'by' argument of type str"
-            )
         if type(by) is str:
             return self._from_pyldf(self._ldf.sort(by, reverse, nulls_last))
         if type(reverse) is bool:
             reverse = [reverse]
 
         by = pli.selection_to_pyexpr_list(by)
-        return self._from_pyldf(self._ldf.sort_by_exprs(by, reverse))
+        return self._from_pyldf(self._ldf.sort_by_exprs(by, reverse, nulls_last))
 
     def collect(
         self,
@@ -576,7 +586,7 @@ class LazyFrame(Generic[DF]):
         """
         Collect into a DataFrame.
 
-        Note: use `fetch` if you want to run this query on the first `n` rows only.
+        Note: use :func:`fetch` if you want to run your query on the first `n` rows only.
         This can be a huge time saver in debugging queries.
 
         Parameters
@@ -633,8 +643,9 @@ class LazyFrame(Generic[DF]):
         slice_pushdown: bool = True,
     ) -> DF:
         """
-        Fetch is like a collect operation, but it overwrites the number of rows read by every scan
-        operation. This is a utility that helps debug a query on a smaller number of rows.
+        Fetch is like a :func:`collect` operation, but it overwrites the number of rows read
+        by every scan operation. This is a utility that helps debug a query on a smaller number
+        of rows.
 
         Note that the fetch does not guarantee the final number of rows in the DataFrame.
         Filter, join operations and a lower number of rows available in the scanned file influence
@@ -682,13 +693,12 @@ class LazyFrame(Generic[DF]):
         return self._dataframe_class._from_pydf(ldf.fetch(n_rows))
 
     @property
-    def columns(self) -> List[str]:
+    def columns(self) -> list[str]:
         """
         Get or set column names.
 
         Examples
         --------
-
         >>> df = (
         ...     pl.DataFrame(
         ...         {
@@ -708,7 +718,7 @@ class LazyFrame(Generic[DF]):
         return self._ldf.columns()
 
     @property
-    def dtypes(self) -> List[Type[DataType]]:
+    def dtypes(self) -> list[type[DataType]]:
         """
         Get dtypes of columns in LazyFrame.
 
@@ -722,16 +732,16 @@ class LazyFrame(Generic[DF]):
         ...     }
         ... ).lazy()
         >>> lf.dtypes
-        [<class 'polars.datatypes.int64'>, <class 'polars.datatypes.float64'>, <class 'polars.datatypes.utf8'>]
+        [<class 'polars.datatypes.Int64'>, <class 'polars.datatypes.Float64'>, <class 'polars.datatypes.Utf8'>]
 
         See Also
         --------
-        schema : Return a dict of [column name, dtype]
+        schema : Returns a {colname:dtype} mapping.
         """
         return self._ldf.dtypes()
 
     @property
-    def schema(self) -> Dict[str, Type[DataType]]:
+    def schema(self) -> dict[str, type[DataType]]:
         """
         Get a dict[column name, DataType]
 
@@ -756,7 +766,53 @@ class LazyFrame(Generic[DF]):
         """
         return self._from_pyldf(self._ldf.cache())
 
-    def filter(self: LDF, predicate: Union["pli.Expr", str]) -> LDF:
+    def cleared(self: LDF) -> LDF:
+        """
+        Create an empty copy of the current LazyFrame, with identical schema but no data.
+
+        See Also
+        --------
+        clone : Cheap deepcopy/clone.
+
+        Examples
+        --------
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "a": [None, 2, 3, 4],
+        ...         "b": [0.5, None, 2.5, 13],
+        ...         "c": [True, True, False, None],
+        ...     }
+        ... ).lazy()
+        >>> df.cleared().fetch()
+        shape: (0, 3)
+        ┌─────┬─────┬──────┐
+        │ a   ┆ b   ┆ c    │
+        │ --- ┆ --- ┆ ---  │
+        │ i64 ┆ f64 ┆ bool │
+        ╞═════╪═════╪══════╡
+        └─────┴─────┴──────┘
+
+        """
+        return self._dataframe_class(columns=self.schema).lazy()
+
+    def clone(self: LDF) -> LDF:
+        """
+        Very cheap deepcopy/clone.
+
+        See Also
+        --------
+        cleared : Create an empty copy of the current LazyFrame, with identical
+            schema but no data.
+        """
+        return self._from_pyldf(self._ldf.clone())
+
+    def __copy__(self: LDF) -> LDF:
+        return self.clone()
+
+    def __deepcopy__(self: LDF, memodict: dict = {}) -> LDF:
+        return self.clone()
+
+    def filter(self: LDF, predicate: pli.Expr | str) -> LDF:
         """
         Filter the rows in the DataFrame based on a predicate expression.
 
@@ -767,7 +823,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> lf = pl.DataFrame(
         ...     {
         ...         "foo": [1, 2, 3],
@@ -809,9 +864,7 @@ class LazyFrame(Generic[DF]):
 
     def select(
         self: LDF,
-        exprs: Union[
-            str, "pli.Expr", Sequence[str], Sequence["pli.Expr"], "pli.Series"
-        ],
+        exprs: str | pli.Expr | Sequence[str | pli.Expr] | pli.Series,
     ) -> LDF:
         """
         Select columns from this DataFrame.
@@ -823,7 +876,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "foo": [1, 2, 3],
@@ -851,9 +903,9 @@ class LazyFrame(Generic[DF]):
 
     def groupby(
         self: LDF,
-        by: Union[str, List[str], "pli.Expr", List["pli.Expr"]],
+        by: str | list[str] | pli.Expr | list[pli.Expr],
         maintain_order: bool = False,
-    ) -> "LazyGroupBy[LDF]":
+    ) -> LazyGroupBy[LDF]:
         """
         Start a groupby operation.
 
@@ -866,7 +918,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": ["a", "b", "a", "b", "b", "c"],
@@ -874,22 +925,23 @@ class LazyFrame(Generic[DF]):
         ...         "c": [6, 5, 4, 3, 2, 1],
         ...     }
         ... ).lazy()
-        # does NOT work:
+
+        The following does NOT work:
         # df.groupby("a")["b"].sum().collect()
         #                ^^^^ TypeError: 'LazyGroupBy' object is not subscriptable
-        # instead, use .agg():
-        >>> df.groupby("a").agg(pl.col("b").sum()).collect()
+        instead, use .agg():
+        >>> df.groupby(by="a", maintain_order=True).agg(pl.col("b").sum()).collect()
         shape: (3, 2)
         ┌─────┬─────┐
         │ a   ┆ b   │
         │ --- ┆ --- │
         │ str ┆ i64 │
         ╞═════╪═════╡
-        │ c   ┆ 6   │
+        │ a   ┆ 4   │
         ├╌╌╌╌╌┼╌╌╌╌╌┤
         │ b   ┆ 11  │
         ├╌╌╌╌╌┼╌╌╌╌╌┤
-        │ a   ┆ 4   │
+        │ c   ┆ 6   │
         └─────┴─────┘
 
         """
@@ -901,10 +953,10 @@ class LazyFrame(Generic[DF]):
         self: LDF,
         index_column: str,
         period: str,
-        offset: Optional[str] = None,
+        offset: str | None = None,
         closed: str = "right",
-        by: Optional[Union[str, List[str], "pli.Expr", List["pli.Expr"]]] = None,
-    ) -> "LazyGroupBy[LDF]":
+        by: str | list[str] | pli.Expr | list[pli.Expr] | None = None,
+    ) -> LazyGroupBy[LDF]:
         """
         Create rolling groups based on a time column (or index value of type Int32, Int64).
 
@@ -960,7 +1012,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> dates = [
         ...     "2020-01-01 13:45:48",
         ...     "2020-01-01 16:42:13",
@@ -985,23 +1036,22 @@ class LazyFrame(Generic[DF]):
         >>> out
         shape: (6, 4)
         ┌─────────────────────┬───────┬───────┬───────┐
-        │ dt                  ┆ a_sum ┆ a_max ┆ a_min │
+        │ dt                  ┆ sum_a ┆ min_a ┆ max_a │
         │ ---                 ┆ ---   ┆ ---   ┆ ---   │
-        │ datetime[ms]        ┆ i64   ┆ i64   ┆ i64   │
+        │ datetime[μs]        ┆ i64   ┆ i64   ┆ i64   │
         ╞═════════════════════╪═══════╪═══════╪═══════╡
         │ 2020-01-01 13:45:48 ┆ 3     ┆ 3     ┆ 3     │
         ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
-        │ 2020-01-01 16:42:13 ┆ 10    ┆ 7     ┆ 3     │
+        │ 2020-01-01 16:42:13 ┆ 10    ┆ 3     ┆ 7     │
         ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
-        │ 2020-01-01 16:45:09 ┆ 15    ┆ 7     ┆ 3     │
+        │ 2020-01-01 16:45:09 ┆ 15    ┆ 3     ┆ 7     │
         ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
-        │ 2020-01-02 18:12:48 ┆ 24    ┆ 9     ┆ 3     │
+        │ 2020-01-02 18:12:48 ┆ 24    ┆ 3     ┆ 9     │
         ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
-        │ 2020-01-03 19:45:32 ┆ 11    ┆ 9     ┆ 2     │
+        │ 2020-01-03 19:45:32 ┆ 11    ┆ 2     ┆ 9     │
         ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
         │ 2020-01-08 23:16:43 ┆ 1     ┆ 1     ┆ 1     │
         └─────────────────────┴───────┴───────┴───────┘
-
 
         """
 
@@ -1016,13 +1066,13 @@ class LazyFrame(Generic[DF]):
         self: LDF,
         index_column: str,
         every: str,
-        period: Optional[str] = None,
-        offset: Optional[str] = None,
+        period: str | None = None,
+        offset: str | None = None,
         truncate: bool = True,
         include_boundaries: bool = False,
         closed: str = "right",
-        by: Optional[Union[str, List[str], "pli.Expr", List["pli.Expr"]]] = None,
-    ) -> "LazyGroupBy[LDF]":
+        by: str | list[str] | pli.Expr | list[pli.Expr] | None = None,
+    ) -> LazyGroupBy[LDF]:
         """
         Groups based on a time value (or index value of type Int32, Int64). Time windows are calculated and rows are assigned to windows.
         Different from a normal groupby is that a row can be member of multiple groups. The time/index window could
@@ -1109,18 +1159,19 @@ class LazyFrame(Generic[DF]):
         )
         return LazyGroupBy(lgb, lazyframe_class=self.__class__)
 
+    @deprecated_alias(ldf="other")
     def join_asof(
         self: LDF,
-        ldf: "LazyFrame",
-        left_on: Optional[str] = None,
-        right_on: Optional[str] = None,
-        on: Optional[str] = None,
-        by_left: Optional[Union[str, List[str]]] = None,
-        by_right: Optional[Union[str, List[str]]] = None,
-        by: Optional[Union[str, List[str]]] = None,
+        other: LazyFrame,
+        left_on: str | None = None,
+        right_on: str | None = None,
+        on: str | None = None,
+        by_left: str | list[str] | None = None,
+        by_right: str | list[str] | None = None,
+        by: str | list[str] | None = None,
         strategy: str = "backward",
         suffix: str = "_right",
-        tolerance: Optional[Union[str, int, float]] = None,
+        tolerance: str | int | float | None = None,
         allow_parallel: bool = True,
         force_parallel: bool = False,
     ) -> LDF:
@@ -1142,7 +1193,7 @@ class LazyFrame(Generic[DF]):
 
         Parameters
         ----------
-        ldf
+        other
             Lazy DataFrame to join with.
         left_on
             Join column of the left DataFrame.
@@ -1185,8 +1236,8 @@ class LazyFrame(Generic[DF]):
         force_parallel
             Force the physical plan to evaluate the computation of both DataFrames up to the join in parallel.
         """
-        if not isinstance(ldf, LazyFrame):
-            raise ValueError(f"Expected a `LazyFrame` as join table, got {type(ldf)}")
+        if not isinstance(other, LazyFrame):
+            raise ValueError(f"Expected a `LazyFrame` as join table, got {type(other)}")
 
         if isinstance(on, str):
             left_on = on
@@ -1195,13 +1246,13 @@ class LazyFrame(Generic[DF]):
         if left_on is None or right_on is None:
             raise ValueError("You should pass the column to join on as an argument.")
 
-        by_left_: Union[List[str], None]
+        by_left_: list[str] | None
         if isinstance(by_left, str):
             by_left_ = [by_left]
         else:
             by_left_ = by_left
 
-        by_right_: Union[List[str], None]
+        by_right_: list[str] | None
         if isinstance(by_right, (str, pli.Expr)):
             by_right_ = [by_right]
         else:
@@ -1214,8 +1265,8 @@ class LazyFrame(Generic[DF]):
             by_left_ = by
             by_right_ = by
 
-        tolerance_str: Optional[str] = None
-        tolerance_num: Optional[Union[float, int]] = None
+        tolerance_str: str | None = None
+        tolerance_num: float | int | None = None
         if isinstance(tolerance, str):
             tolerance_str = tolerance
         else:
@@ -1223,7 +1274,7 @@ class LazyFrame(Generic[DF]):
 
         return self._from_pyldf(
             self._ldf.join_asof(
-                ldf._ldf,
+                other._ldf,
                 pli.col(left_on)._pyexpr,
                 pli.col(right_on)._pyexpr,
                 by_left_,
@@ -1237,26 +1288,27 @@ class LazyFrame(Generic[DF]):
             )
         )
 
+    @deprecated_alias(ldf="other")
     def join(
         self: LDF,
-        ldf: "LazyFrame",
-        left_on: Optional[Union[str, "pli.Expr", List[Union[str, "pli.Expr"]]]] = None,
-        right_on: Optional[Union[str, "pli.Expr", List[Union[str, "pli.Expr"]]]] = None,
-        on: Optional[Union[str, "pli.Expr", List[Union[str, "pli.Expr"]]]] = None,
+        other: LazyFrame,
+        left_on: str | pli.Expr | list[str | pli.Expr] | None = None,
+        right_on: str | pli.Expr | list[str | pli.Expr] | None = None,
+        on: str | pli.Expr | list[str | pli.Expr] | None = None,
         how: str = "inner",
         suffix: str = "_right",
         allow_parallel: bool = True,
         force_parallel: bool = False,
-        asof_by: Optional[Union[str, List[str]]] = None,
-        asof_by_left: Optional[Union[str, List[str]]] = None,
-        asof_by_right: Optional[Union[str, List[str]]] = None,
+        asof_by: str | list[str] | None = None,
+        asof_by_left: str | list[str] | None = None,
+        asof_by_right: str | list[str] | None = None,
     ) -> LDF:
         """
         Add a join operation to the Logical Plan.
 
         Parameters
         ----------
-        ldf
+        other
             Lazy DataFrame to join with.
         left_on
             Join column of the left DataFrame.
@@ -1292,7 +1344,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "foo": [1, 2, 3],
@@ -1334,8 +1385,8 @@ class LazyFrame(Generic[DF]):
         └──────┴──────┴─────┴───────┘
 
         """
-        if not isinstance(ldf, LazyFrame):
-            raise ValueError(f"Expected a `LazyFrame` as join table, got {type(ldf)}")
+        if not isinstance(other, LazyFrame):
+            raise ValueError(f"Expected a `LazyFrame` as join table, got {type(other)}")
 
         if how == "asof":
             warnings.warn(
@@ -1345,7 +1396,7 @@ class LazyFrame(Generic[DF]):
         if how == "cross":
             return self._from_pyldf(
                 self._ldf.join(
-                    ldf._ldf,
+                    other._ldf,
                     [],
                     [],
                     allow_parallel,
@@ -1357,13 +1408,13 @@ class LazyFrame(Generic[DF]):
                 )
             )
 
-        left_on_: Optional[List[Union[str, pli.Expr]]]
+        left_on_: list[str | pli.Expr] | None
         if isinstance(left_on, (str, pli.Expr)):
             left_on_ = [left_on]
         else:
             left_on_ = left_on
 
-        right_on_: Optional[List[Union[str, pli.Expr]]]
+        right_on_: list[str | pli.Expr] | None
         if isinstance(right_on, (str, pli.Expr)):
             right_on_ = [right_on]
         else:
@@ -1392,13 +1443,13 @@ class LazyFrame(Generic[DF]):
 
         # set asof_by
 
-        left_asof_by_: Union[List[str], None]
+        left_asof_by_: list[str] | None
         if isinstance(asof_by_left, str):
             left_asof_by_ = [asof_by_left]
         else:
             left_asof_by_ = asof_by_left
 
-        right_asof_by_: Union[List[str], None]
+        right_asof_by_: list[str] | None
         if isinstance(asof_by_right, (str, pli.Expr)):
             right_asof_by_ = [asof_by_right]
         else:
@@ -1418,7 +1469,7 @@ class LazyFrame(Generic[DF]):
 
         return self._from_pyldf(
             self._ldf.join(
-                ldf._ldf,
+                other._ldf,
                 new_left_on,
                 new_right_on,
                 allow_parallel,
@@ -1432,7 +1483,8 @@ class LazyFrame(Generic[DF]):
 
     def with_columns(
         self: LDF,
-        exprs: Union["pli.Expr", "pli.Series", List[Union["pli.Expr", "pli.Series"]]],
+        exprs: pli.Expr | pli.Series | Sequence[pli.Expr | pli.Series] | None = None,
+        **named_exprs: pli.Expr | pli.Series | str,
     ) -> LDF:
         """
         Add or overwrite multiple columns in a DataFrame.
@@ -1441,23 +1493,92 @@ class LazyFrame(Generic[DF]):
         ----------
         exprs
             List of Expressions that evaluate to columns.
+        **named_exprs
+            Named column Expressions, provided as kwargs.
+
+        Examples
+        --------
+        >>> ldf = pl.DataFrame(
+        ...     {
+        ...         "a": [1, 2, 3, 4],
+        ...         "b": [0.5, 4, 10, 13],
+        ...         "c": [True, True, False, True],
+        ...     }
+        ... ).lazy()
+        >>> ldf.with_columns(
+        ...     [
+        ...         (pl.col("a") ** 2).alias("a^2"),
+        ...         (pl.col("b") / 2).alias("b/2"),
+        ...         (pl.col("c").is_not()).alias("not c"),
+        ...     ]
+        ... ).collect()
+        shape: (4, 6)
+        ┌─────┬──────┬───────┬──────┬──────┬───────┐
+        │ a   ┆ b    ┆ c     ┆ a^2  ┆ b/2  ┆ not c │
+        │ --- ┆ ---  ┆ ---   ┆ ---  ┆ ---  ┆ ---   │
+        │ i64 ┆ f64  ┆ bool  ┆ f64  ┆ f64  ┆ bool  │
+        ╞═════╪══════╪═══════╪══════╪══════╪═══════╡
+        │ 1   ┆ 0.5  ┆ true  ┆ 1.0  ┆ 0.25 ┆ false │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+        │ 2   ┆ 4.0  ┆ true  ┆ 4.0  ┆ 2.0  ┆ false │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+        │ 3   ┆ 10.0 ┆ false ┆ 9.0  ┆ 5.0  ┆ true  │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+        │ 4   ┆ 13.0 ┆ true  ┆ 16.0 ┆ 6.5  ┆ false │
+        └─────┴──────┴───────┴──────┴──────┴───────┘
+
+        >>> # Support for kwarg expressions is considered EXPERIMENTAL.
+        >>> # Currently requires opt-in via `pl.Config` boolean flag:
+        >>>
+        >>> pl.Config.with_columns_kwargs = True
+        >>> ldf.with_columns(
+        ...     d=pl.col("a") * pl.col("b"),
+        ...     e=pl.col("c").is_not(),
+        ...     f="foo",
+        ... ).collect()
+        shape: (4, 6)
+        ┌─────┬──────┬───────┬──────┬───────┬─────┐
+        │ a   ┆ b    ┆ c     ┆ d    ┆ e     ┆ f   │
+        │ --- ┆ ---  ┆ ---   ┆ ---  ┆ ---   ┆ --- │
+        │ i64 ┆ f64  ┆ bool  ┆ f64  ┆ bool  ┆ str │
+        ╞═════╪══════╪═══════╪══════╪═══════╪═════╡
+        │ 1   ┆ 0.5  ┆ true  ┆ 0.5  ┆ false ┆ foo │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 2   ┆ 4.0  ┆ true  ┆ 8.0  ┆ false ┆ foo │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 3   ┆ 10.0 ┆ false ┆ 30.0 ┆ true  ┆ foo │
+        ├╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 4   ┆ 13.0 ┆ true  ┆ 52.0 ┆ false ┆ foo │
+        └─────┴──────┴───────┴──────┴───────┴─────┘
         """
-        if isinstance(exprs, pli.Expr):
-            return self.with_column(exprs)
+        if named_exprs and not Config.with_columns_kwargs:
+            raise RuntimeError(
+                "**kwargs support is experimental; requires opt-in via `pl.Config.set_with_columns_kwargs(True)`"
+            )
+        elif exprs is None and not named_exprs:
+            raise ValueError("Expected at least one of 'exprs' or **named_exprs")
 
+        exprs = (
+            []
+            if exprs is None
+            else ([exprs] if isinstance(exprs, pli.Expr) else list(exprs))
+        )
+        exprs.extend(
+            (pli.lit(expr).alias(name) if isinstance(expr, str) else expr.alias(name))
+            for name, expr in named_exprs.items()
+        )
         pyexprs = []
-
         for e in exprs:
             if isinstance(e, pli.Expr):
                 pyexprs.append(e._pyexpr)
             elif isinstance(e, pli.Series):
                 pyexprs.append(pli.lit(e)._pyexpr)
             else:
-                raise ValueError(f"expected and expression, got {e}")
+                raise ValueError(f"Expected an expression, got {e}")
 
         return self._from_pyldf(self._ldf.with_columns(pyexprs))
 
-    def with_column(self: LDF, expr: "pli.Expr") -> LDF:
+    def with_column(self: LDF, expr: pli.Expr) -> LDF:
         """
         Add or overwrite column in a DataFrame.
 
@@ -1468,7 +1589,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 3, 5],
@@ -1505,7 +1625,7 @@ class LazyFrame(Generic[DF]):
         """
         return self.with_columns([expr])
 
-    def drop(self: LDF, columns: Union[str, List[str]]) -> LDF:
+    def drop(self: LDF, columns: str | list[str]) -> LDF:
         """
         Remove one or multiple columns from a DataFrame.
 
@@ -1520,7 +1640,7 @@ class LazyFrame(Generic[DF]):
             columns = [columns]
         return self._from_pyldf(self._ldf.drop_columns(columns))
 
-    def rename(self: LDF, mapping: Dict[str, str]) -> LDF:
+    def rename(self: LDF, mapping: dict[str, str]) -> LDF:
         """
         Rename column names.
 
@@ -1551,7 +1671,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 3, 5],
@@ -1591,7 +1710,7 @@ class LazyFrame(Generic[DF]):
     def shift_and_fill(
         self: LDF,
         periods: int,
-        fill_value: Union["pli.Expr", int, str, float],
+        fill_value: pli.Expr | int | str | float,
     ) -> LDF:
         """
         Shift the values by a given period and fill the parts that will be empty due to this operation
@@ -1606,7 +1725,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 3, 5],
@@ -1645,7 +1763,7 @@ class LazyFrame(Generic[DF]):
             fill_value = pli.lit(fill_value)
         return self._from_pyldf(self._ldf.shift_and_fill(periods, fill_value._pyexpr))
 
-    def slice(self: LDF, offset: int, length: int) -> LDF:
+    def slice(self: LDF, offset: int, length: int | None = None) -> LDF:
         """
         Slice the DataFrame.
 
@@ -1658,7 +1776,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": ["x", "y", "z"],
@@ -1680,12 +1797,20 @@ class LazyFrame(Generic[DF]):
         └─────┴─────┴─────┘
 
         """
+        if length and length < 0:
+            raise ValueError(
+                f"Negative slice lengths ({length}) are invalid for LazyFrame"
+            )
         return self._from_pyldf(self._ldf.slice(offset, length))
 
     def limit(self: LDF, n: int = 5) -> LDF:
         """
-        Limit the DataFrame to the first `n` rows. Note if you don't want the rows to be scanned,
-        use the `fetch` operation.
+        Limit the LazyFrame to the first `n` rows.
+
+        .. note::
+            Consider using the :func:`fetch` operation when you only want to test your query.
+            The :func:`fetch` operation will load the first `n` rows at the scan level, whereas
+            the :func:`head`/:func:`limit` are applied at the end.
 
         Parameters
         ----------
@@ -1696,12 +1821,14 @@ class LazyFrame(Generic[DF]):
 
     def head(self: LDF, n: int = 5) -> LDF:
         """
-        Gets the first `n` rows of the DataFrame. You probably don't want to use this!
+        Gets the first `n` rows of the DataFrame.
 
-        Consider using the `fetch` operation. The `fetch` operation will truly load the first `n`
-        rows lazily.
+        .. note::
+            Consider using the :func:`fetch` operation when you only want to test your query.
+            The :func:`fetch` operation will load the first `n` rows at the scan level, whereas
+            the :func:`head`/:func:`limit` are applied at the end.
 
-        This operation instead loads all the rows and only applies the `head` at the end.
+        This operation instead loads all the rows and only applies the ``head`` at the end.
 
         Parameters
         ----------
@@ -1737,20 +1864,19 @@ class LazyFrame(Generic[DF]):
         """
         Add a column at index 0 that counts the rows.
 
-        ..warning::
+        .. warning::
             This can have a negative effect on query performance.
-            This may for instance block predicate pushdown optimization.
+            This may, for instance, block predicate pushdown optimization.
 
         Parameters
         ----------
         name
             Name of the column to add.
         offset
-            Start the row count at this offset
+            Start the row count at this offset.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": [1, 3, 5],
@@ -1774,7 +1900,28 @@ class LazyFrame(Generic[DF]):
         """
         return self._from_pyldf(self._ldf.with_row_count(name, offset))
 
-    def fill_null(self: LDF, fill_value: Union[int, str, "pli.Expr"]) -> LDF:
+    def take_every(self: LDF, n: int) -> LDF:
+        """
+        Take every nth row in the LazyFrame and return as a new LazyFrame.
+
+        Examples
+        --------
+        >>> s = pl.DataFrame({"a": [1, 2, 3, 4], "b": [5, 6, 7, 8]}).lazy()
+        >>> s.take_every(2).collect()
+        shape: (2, 2)
+        ┌─────┬─────┐
+        │ a   ┆ b   │
+        │ --- ┆ --- │
+        │ i64 ┆ i64 │
+        ╞═════╪═════╡
+        │ 1   ┆ 5   │
+        ├╌╌╌╌╌┼╌╌╌╌╌┤
+        │ 3   ┆ 7   │
+        └─────┴─────┘
+        """
+        return self.select(pli.col("*").take_every(n))
+
+    def fill_null(self: LDF, fill_value: int | str | pli.Expr) -> LDF:
         """
         Fill missing values with a literal or Expr.
 
@@ -1787,20 +1934,18 @@ class LazyFrame(Generic[DF]):
             fill_value = pli.lit(fill_value)
         return self._from_pyldf(self._ldf.fill_null(fill_value._pyexpr))
 
-    def fill_nan(self: LDF, fill_value: Union[int, str, float, "pli.Expr"]) -> LDF:
+    def fill_nan(self: LDF, fill_value: int | str | float | pli.Expr) -> LDF:
         """
         Fill floating point NaN values.
 
-        ..warning::
-
-            NOTE that floating point NaN (No a Number) are not missing values!
-            to replace missing values, use `fill_null`.
-
+        .. warning::
+            Note that floating point NaN (Not a Number) are not missing values!
+            To replace missing values, use :func:`fill_null` instead.
 
         Parameters
         ----------
         fill_value
-            Value to fill the NaN values with
+            Value to fill the NaN values with.
         """
         if not isinstance(fill_value, pli.Expr):
             fill_value = pli.lit(fill_value)
@@ -1856,14 +2001,13 @@ class LazyFrame(Generic[DF]):
 
     def explode(
         self: LDF,
-        columns: Union[str, List[str], "pli.Expr", List["pli.Expr"]],
+        columns: str | list[str] | pli.Expr | list[pli.Expr],
     ) -> LDF:
         """
         Explode lists to long format.
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "letters": ["c", "c", "a", "c", "a", "b"],
@@ -1872,23 +2016,23 @@ class LazyFrame(Generic[DF]):
         ... )
         >>> df
         shape: (6, 2)
-        ┌─────────┬────────────┐
-        │ letters ┆ nrs        │
-        │ ---     ┆ ---        │
-        │ str     ┆ list [i64] │
-        ╞═════════╪════════════╡
-        │ c       ┆ [1, 2]     │
-        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ c       ┆ [1, 3]     │
-        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ a       ┆ [4, 3]     │
-        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ c       ┆ [5, 5, 5]  │
-        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ a       ┆ [6]        │
-        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-        │ b       ┆ [2, 1, 2]  │
-        └─────────┴────────────┘
+        ┌─────────┬───────────┐
+        │ letters ┆ nrs       │
+        │ ---     ┆ ---       │
+        │ str     ┆ list[i64] │
+        ╞═════════╪═══════════╡
+        │ c       ┆ [1, 2]    │
+        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ c       ┆ [1, 3]    │
+        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ a       ┆ [4, 3]    │
+        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ c       ┆ [5, 5, 5] │
+        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ a       ┆ [6]       │
+        ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+        │ b       ┆ [2, 1, 2] │
+        └─────────┴───────────┘
         >>> df.explode("nrs")
         shape: (13, 2)
         ┌─────────┬─────┐
@@ -1922,19 +2066,19 @@ class LazyFrame(Generic[DF]):
     def distinct(
         self: LDF,
         maintain_order: bool = True,
-        subset: Optional[Union[str, List[str]]] = None,
+        subset: str | list[str] | None = None,
         keep: str = "first",
     ) -> LDF:
         """
         .. deprecated:: 0.13.13
-            Please use `unique`
+            Use :func:`unique` instead.
         """
         return self.unique(maintain_order, subset, keep)
 
     def unique(
         self: LDF,
         maintain_order: bool = True,
-        subset: Optional[Union[str, List[str]]] = None,
+        subset: str | list[str] | None = None,
         keep: str = "first",
     ) -> LDF:
         """
@@ -1958,7 +2102,7 @@ class LazyFrame(Generic[DF]):
             subset = [subset]
         return self._from_pyldf(self._ldf.unique(maintain_order, subset, keep))
 
-    def drop_nulls(self: LDF, subset: Optional[Union[List[str], str]] = None) -> LDF:
+    def drop_nulls(self: LDF, subset: list[str] | str | None = None) -> LDF:
         """
         Drop rows with null values from this DataFrame.
 
@@ -2040,10 +2184,10 @@ class LazyFrame(Generic[DF]):
 
     def melt(
         self: LDF,
-        id_vars: Optional[Union[str, List[str]]] = None,
-        value_vars: Optional[Union[str, List[str]]] = None,
-        variable_name: Optional[str] = None,
-        value_name: Optional[str] = None,
+        id_vars: str | list[str] | None = None,
+        value_vars: str | list[str] | None = None,
+        variable_name: str | None = None,
+        value_name: str | None = None,
     ) -> LDF:
         """
         Unpivot a DataFrame from wide to long format, optionally leaving identifiers set.
@@ -2066,7 +2210,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "a": ["x", "y", "z"],
@@ -2109,7 +2252,7 @@ class LazyFrame(Generic[DF]):
 
     def map(
         self: LDF,
-        f: Callable[["pli.DataFrame"], "pli.DataFrame"],
+        f: Callable[[pli.DataFrame], pli.DataFrame],
         predicate_pushdown: bool = True,
         projection_pushdown: bool = True,
         no_optimizations: bool = False,
@@ -2141,7 +2284,6 @@ class LazyFrame(Generic[DF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "foo": [1, None, 9, 10],
@@ -2168,7 +2310,7 @@ class LazyFrame(Generic[DF]):
         """
         return self.select(pli.col("*").interpolate())
 
-    def unnest(self: LDF, names: Union[str, List[str]]) -> LDF:
+    def unnest(self: LDF, names: str | list[str]) -> LDF:
         """
         Decompose a struct into its fields. The fields will be inserted in to the `DataFrame` on the
         location of the `struct` type.
@@ -2177,6 +2319,7 @@ class LazyFrame(Generic[DF]):
         ----------
         names
            Names of the struct columns that will be decomposed by its fields
+
         """
         if isinstance(names, str):
             names = [names]
@@ -2188,11 +2331,11 @@ class LazyGroupBy(Generic[LDF]):
     Created by `df.lazy().groupby("foo)"`
     """
 
-    def __init__(self, lgb: "PyLazyGroupBy", lazyframe_class: Type[LDF]) -> None:
+    def __init__(self, lgb: PyLazyGroupBy, lazyframe_class: type[LDF]) -> None:
         self.lgb = lgb
         self._lazyframe_class = lazyframe_class
 
-    def agg(self, aggs: Union[List["pli.Expr"], "pli.Expr"]) -> LDF:
+    def agg(self, aggs: list[pli.Expr] | pli.Expr) -> LDF:
         """
         Describe the aggregation that need to be done on a group.
 
@@ -2203,7 +2346,6 @@ class LazyGroupBy(Generic[LDF]):
 
         Examples
         --------
-
         >>> (
         ...     pl.scan_csv("data.csv")
         ...     .groupby("groups")
@@ -2230,7 +2372,6 @@ class LazyGroupBy(Generic[LDF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "letters": ["c", "c", "a", "c", "a", "b"],
@@ -2288,7 +2429,6 @@ class LazyGroupBy(Generic[LDF]):
 
         Examples
         --------
-
         >>> df = pl.DataFrame(
         ...     {
         ...         "letters": ["c", "c", "a", "c", "a", "b"],
@@ -2335,14 +2475,63 @@ class LazyGroupBy(Generic[LDF]):
         """
         return self._lazyframe_class._from_pyldf(self.lgb.tail(n))
 
-    def apply(self, f: Callable[["pli.DataFrame"], "pli.DataFrame"]) -> LDF:
+    def apply(self, f: Callable[[pli.DataFrame], pli.DataFrame]) -> LDF:
         """
-        Apply a function over the groups as a new `DataFrame`. It is not recommended that you use
-        this as materializing the `DataFrame` is quite expensive.
+        Apply a function over the groups as a new `DataFrame`.
+        Implementing logic using this .apply method is generally slower and more memory intensive
+        than implementing the same logic using the expression API because:
+        - with .apply the logic is implemented in Python but with an expression the logic is implemented in Rust
+        - with .apply the DataFrame is materialized in memory
+        - expressions can be parallelised
+        - expressions can be optimised
+
+        If possible use the expression API for best performance.
 
         Parameters
         ----------
         f
-            Function to apply over the `DataFrame`.
+            Function to apply over each group of the `LazyFrame`.
+
+        Examples
+        --------
+        The function is applied by group.
+
+        >>> df = pl.DataFrame(
+        ...     {
+        ...         "foo": [1, 2, 3, 1],
+        ...         "bar": ["a", "b", "c", "c"],
+        ...     }
+        ... )
+        >>> (
+        ...     df.lazy()
+        ...     .groupby("bar", maintain_order=True)
+        ...     .agg(
+        ...         [
+        ...             pl.col("foo").apply(lambda x: x.sum()),
+        ...         ]
+        ...     )
+        ...     .collect()
+        ... )
+        shape: (3, 2)
+        ┌─────┬─────┐
+        │ bar ┆ foo │
+        │ --- ┆ --- │
+        │ str ┆ i64 │
+        ╞═════╪═════╡
+        │ a   ┆ 1   │
+        ├╌╌╌╌╌┼╌╌╌╌╌┤
+        │ b   ┆ 2   │
+        ├╌╌╌╌╌┼╌╌╌╌╌┤
+        │ c   ┆ 4   │
+        └─────┴─────┘
+
+        It is better to implement this with an expression:
+
+        >>> (
+        ...     df.groupby("bar", maintain_order=True).agg(
+        ...         pl.col("foo").sum(),
+        ...     )
+        ... )  # doctest: +IGNORE_RESULT
+
         """
         return self._lazyframe_class._from_pyldf(self.lgb.apply(f))

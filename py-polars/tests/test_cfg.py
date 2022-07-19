@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from typing import Generator
 
@@ -190,7 +192,6 @@ def test_set_tbl_rows(environ: None) -> None:
 
 
 def test_string_cache(environ: None) -> None:
-
     df1 = pl.DataFrame({"a": ["foo", "bar", "ham"], "b": [1, 2, 3]})
     df2 = pl.DataFrame({"a": ["foo", "spam", "eggs"], "c": [3, 2, 2]})
 

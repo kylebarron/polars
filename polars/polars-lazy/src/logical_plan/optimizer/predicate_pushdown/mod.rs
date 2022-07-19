@@ -84,7 +84,8 @@ impl PredicatePushDown {
                     // first we check if we are able to push down the predicate passed this node
                     // it could be that this node just added the column where we base the predicate on
                     let input_schema = lp_arena.get(node).schema(lp_arena);
-                    let mut pushdown_predicates = optimizer::init_hashmap();
+                    let mut pushdown_predicates =
+                        optimizer::init_hashmap(Some(acc_predicates.len()));
                     for (name, &predicate) in acc_predicates.iter() {
                         // we can pushdown the predicate
                         if check_input_node(predicate, input_schema, expr_arena) {
@@ -128,7 +129,12 @@ impl PredicatePushDown {
             .iter()
             .map(|&node| {
                 let alp = lp_arena.take(node);
-                let alp = self.push_down(alp, init_hashmap(), lp_arena, expr_arena)?;
+                let alp = self.push_down(
+                    alp,
+                    init_hashmap(Some(acc_predicates.len())),
+                    lp_arena,
+                    expr_arena,
+                )?;
                 lp_arena.replace(node, alp);
                 Ok(node)
             })
@@ -386,8 +392,8 @@ impl PredicatePushDown {
                 let schema_left = lp_arena.get(input_left).schema(lp_arena);
                 let schema_right = lp_arena.get(input_right).schema(lp_arena);
 
-                let mut pushdown_left = optimizer::init_hashmap();
-                let mut pushdown_right = optimizer::init_hashmap();
+                let mut pushdown_left = optimizer::init_hashmap(Some(acc_predicates.len()));
+                let mut pushdown_right = optimizer::init_hashmap(Some(acc_predicates.len()));
                 let mut local_predicates = Vec::with_capacity(acc_predicates.len());
 
                 for (_, predicate) in acc_predicates {
@@ -396,7 +402,10 @@ impl PredicatePushDown {
                         |e: &AExpr| matches!(e, AExpr::IsUnique(_) | AExpr::Duplicated(_));
 
                     let checks_nulls =
-                        |e: &AExpr| matches!(e, AExpr::IsNull(_) | AExpr::IsNotNull(_));
+                        |e: &AExpr| matches!(e, AExpr::IsNull(_) | AExpr::IsNotNull(_)) ||
+                            // any operation that checks for equality or ordering can be wrong because
+                            // the join can produce null values
+                            matches!(e, AExpr::BinaryExpr {op, ..} if !matches!(op, Operator::NotEq));
                     if has_aexpr(predicate, expr_arena, matches)
                         // join might create null values.
                         || has_aexpr(predicate, expr_arena, checks_nulls)
@@ -478,8 +487,23 @@ impl PredicatePushDown {
                     self.no_pushdown_restart_opt(lp, acc_predicates, lp_arena, expr_arena)
                 }
             }
+            lp @ Union {..} => {
+                let mut local_predicates = vec![];
+
+                // a count is influenced by a Union/Vstack
+                acc_predicates.retain(|_, predicate| {
+                    if has_aexpr(*predicate, expr_arena, |ae| matches!(ae, AExpr::Count)) {
+                        local_predicates.push(*predicate);
+                        false
+                    } else {
+                        true
+                    }
+                });
+                let lp = self.pushdown_and_continue(lp, acc_predicates, lp_arena, expr_arena, false)?;
+                Ok(self.optional_apply_predicate(lp, local_predicates, lp_arena, expr_arena))
+            }
             // Pushed down passed these nodes
-            lp @ Cache { .. } | lp @ Union { .. } | lp @ Sort { .. } => {
+            lp @ Cache { .. } |  lp @ Sort { .. } => {
                 self.pushdown_and_continue(lp, acc_predicates, lp_arena, expr_arena, false)
             }
             lp @ HStack {..} | lp @ Projection {..} => {
@@ -507,7 +531,7 @@ impl PredicatePushDown {
         lp_arena: &mut Arena<ALogicalPlan>,
         expr_arena: &mut Arena<AExpr>,
     ) -> Result<ALogicalPlan> {
-        let acc_predicates = PlHashMap::with_capacity(32);
+        let acc_predicates = PlHashMap::new();
         self.push_down(logical_plan, acc_predicates, lp_arena, expr_arena)
     }
 }
@@ -531,9 +555,6 @@ mod test {
         );
         let root = *acc_predicates.get("foo").unwrap();
         let expr = node_to_expr(root, &expr_arena);
-        assert_eq!(
-            format!("{:?}", &expr),
-            format!("{:?}", predicate_expr.and(lit(true)))
-        );
+        assert_eq!(format!("{:?}", &expr), format!("{:?}", predicate_expr));
     }
 }

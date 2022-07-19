@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 
 import numpy as np
@@ -25,8 +27,8 @@ def test_type_coercion_when_then_otherwise_2806() -> None:
         pl.DataFrame({"names": ["foo", "spam", "spam"], "nrs": [1, 2, 3]})
         .select(
             [
-                pl.when((pl.col("names") == "spam"))
-                .then((pl.col("nrs") * 2))
+                pl.when(pl.col("names") == "spam")
+                .then(pl.col("nrs") * 2)
                 .otherwise(pl.lit("other"))
                 .alias("new_col"),
             ]
@@ -183,3 +185,140 @@ def test_groupby_agg_equals_zero_3535() -> None:
         "val1": [10, 0, -99],
         "val2": [None, 0.0, 10.5],
     }
+
+
+def test_arithmetic_in_aggregation_3739() -> None:
+    def demean_dot() -> pl.Expr:
+        x = pl.col("x")
+        y = pl.col("y")
+        x1 = x - x.mean()
+        y1 = y - y.mean()
+        return (x1 * y1).sum().alias("demean_dot")
+
+    assert (
+        pl.DataFrame(
+            {
+                "key": ["a", "a", "a", "a"],
+                "x": [4, 2, 2, 4],
+                "y": [2, 0, 2, 0],
+            }
+        )
+        .groupby("key")
+        .agg(
+            [
+                demean_dot(),
+            ]
+        )
+    ).to_dict(False) == {"key": ["a"], "demean_dot": [0.0]}
+
+
+def test_dtype_concat_3735() -> None:
+    for dt in [
+        pl.Int8,
+        pl.Int16,
+        pl.Int32,
+        pl.Int64,
+        pl.UInt8,
+        pl.UInt16,
+        pl.UInt32,
+        pl.UInt64,
+        pl.Float32,
+        pl.Float64,
+    ]:
+        d1 = pl.DataFrame(
+            [
+                pl.Series("val", [1, 2], dtype=dt),
+            ]
+        )
+    d2 = pl.DataFrame(
+        [
+            pl.Series("val", [3, 4], dtype=dt),
+        ]
+    )
+    df = pl.concat([d1, d2])
+    assert df.shape == (4, 1)
+
+
+def test_opaque_filter_on_lists_3784() -> None:
+    df = pl.DataFrame(
+        {"str": ["A", "B", "A", "B", "C"], "group": [1, 1, 2, 1, 2]}
+    ).lazy()
+    df = df.with_column(pl.col("str").cast(pl.Categorical))
+
+    df_groups = df.groupby("group").agg([pl.col("str").list().alias("str_list")])
+
+    pre = "A"
+    succ = "B"
+
+    assert (
+        df_groups.filter(
+            pl.col("str_list").apply(
+                lambda variant: pre in variant
+                and succ in variant
+                and variant.to_list().index(pre) < variant.to_list().index(succ)
+            )
+        )
+    ).collect().to_dict(False) == {"group": [1], "str_list": [["A", "B", "B"]]}
+
+
+def test_ternary_none_struct() -> None:
+    ignore_nulls = False
+
+    def map_expr(name: str) -> pl.Expr:
+        return (
+            pl.when(ignore_nulls or pl.col(name).null_count() == 0)
+            .then(
+                pl.struct(
+                    [
+                        pl.sum(name).alias("sum"),
+                        (pl.count() - pl.col(name).null_count()).alias("count"),
+                    ]
+                ),
+            )
+            .otherwise(None)
+        ).alias("out")
+
+    assert (
+        pl.DataFrame({"groups": [1, 2, 3, 4], "values": [None, None, 1, 2]})
+        .groupby("groups", maintain_order=True)
+        .agg([map_expr("values")])
+    ).to_dict(False) == {
+        "groups": [1, 2, 3, 4],
+        "out": [
+            {"sum": None, "count": None},
+            {"sum": None, "count": None},
+            {"sum": 1, "count": 1},
+            {"sum": 2, "count": 1},
+        ],
+    }
+
+
+def test_when_then_edge_cases_3994() -> None:
+    df = pl.DataFrame(data={"id": [1, 1], "type": [2, 2]})
+
+    # this tests if lazy correctly assigns the list schema to the column aggregation
+    assert (
+        df.lazy()
+        .groupby(["id"])
+        .agg(pl.col("type"))
+        .with_column(
+            pl.when(pl.col("type").arr.lengths() == 0)
+            .then(pl.lit(None))
+            .otherwise(pl.col("type"))
+            .keep_name()
+        )
+        .collect()
+    ).to_dict(False) == {"id": [1], "type": [[2, 2]]}
+
+    # this tests ternary with an empty argument
+    assert (
+        df.filter(pl.col("id") == 42)
+        .groupby(["id"])
+        .agg(pl.col("type"))
+        .with_column(
+            pl.when(pl.col("type").arr.lengths == 0)
+            .then(pl.lit(None))
+            .otherwise(pl.col("type"))
+            .keep_name()
+        )
+    ).to_dict(False) == {"id": [], "type": []}

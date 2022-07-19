@@ -1,6 +1,6 @@
-# flake8: noqa: W191,E101
+from __future__ import annotations
+
 import os
-from typing import List
 
 import pytest
 
@@ -14,26 +14,26 @@ def example_df() -> pl.DataFrame:
 
 
 @pytest.fixture
-def compressions() -> List[str]:
+def compressions() -> list[str]:
     return ["uncompressed", "snappy", "deflate"]
 
 
-def test_from_to_buffer(example_df: pl.DataFrame, compressions: List[str]) -> None:
+def test_from_to_buffer(example_df: pl.DataFrame, compressions: list[str]) -> None:
     for compression in compressions:
         buf = io.BytesIO()
-        example_df.write_avro(buf, compression=compression)  # type: ignore
+        example_df.write_avro(buf, compression=compression)  # type: ignore[arg-type]
         buf.seek(0)
         read_df = pl.read_avro(buf)
         assert example_df.frame_equal(read_df)
 
 
 def test_from_to_file(
-    io_test_dir: str, example_df: pl.DataFrame, compressions: List[str]
+    io_test_dir: str, example_df: pl.DataFrame, compressions: list[str]
 ) -> None:
     f = os.path.join(io_test_dir, "small.avro")
 
     for compression in compressions:
-        example_df.write_avro(f, compression=compression)  # type: ignore
+        example_df.write_avro(f, compression=compression)  # type: ignore[arg-type]
         df_read = pl.read_avro(str(f))
         assert example_df.frame_equal(df_read)
 

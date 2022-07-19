@@ -1,5 +1,5 @@
-# flake8: noqa: W191,E101
-import io
+from __future__ import annotations
+
 from os import path
 from pathlib import Path
 

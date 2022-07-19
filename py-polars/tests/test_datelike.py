@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import typing
 from datetime import date, datetime, time, timedelta
@@ -7,9 +9,10 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 import pytz
-from test_series import verify_series_and_expr_api
 
 import polars as pl
+from polars.datatypes import DTYPE_TEMPORAL_UNITS
+from polars.testing import verify_series_and_expr_api
 
 
 def test_fill_null() -> None:
@@ -17,7 +20,7 @@ def test_fill_null() -> None:
     s = pl.Series("A", [dt, None])
 
     for fill_val in (dt, pl.lit(dt)):
-        out = s.fill_null(fill_val)  # type: ignore
+        out = s.fill_null(fill_val)  # type: ignore[arg-type]
 
         assert out.null_count() == 0
         assert out.dt[0] == dt
@@ -29,7 +32,7 @@ def test_fill_null() -> None:
     s = pl.Series("a", [dt1, dt2, dt3, None])
     dt_2 = date(2001, 1, 4)
     for fill_val in (dt_2, pl.lit(dt_2)):
-        out = s.fill_null(fill_val)  # type: ignore
+        out = s.fill_null(fill_val)  # type: ignore[arg-type]
 
         assert out.null_count() == 0
         assert out.dt[0] == dt1
@@ -101,20 +104,20 @@ def test_timestamp() -> None:
 
 
 def test_from_pydatetime() -> None:
-    dates = [
+    datetimes = [
         datetime(2021, 1, 1),
         datetime(2021, 1, 2),
         datetime(2021, 1, 3),
         datetime(2021, 1, 4, 12, 12),
         None,
     ]
-    s = pl.Series("name", dates)
+    s = pl.Series("name", datetimes)
     assert s.dtype == pl.Datetime
     assert s.name == "name"
     assert s.null_count() == 1
-    assert s.dt[0] == dates[0]
+    assert s.dt[0] == datetimes[0]
 
-    dates = [date(2021, 1, 1), date(2021, 1, 2), date(2021, 1, 3), None]  # type: ignore
+    dates = [date(2021, 1, 1), date(2021, 1, 2), date(2021, 1, 3), None]
     s = pl.Series("name", dates)
     assert s.dtype == pl.Date
     assert s.name == "name"
@@ -152,13 +155,13 @@ def test_datetime_consistency() -> None:
 def test_timezone() -> None:
     ts = pa.timestamp("s")
     data = pa.array([1000, 2000], type=ts)
-    s: pl.Series = pl.from_arrow(data)  # type: ignore
+    s: pl.Series = pl.from_arrow(data)  # type: ignore[assignment]
 
     # with timezone; we do expect a warning here
     tz_ts = pa.timestamp("s", tz="America/New_York")
     tz_data = pa.array([1000, 2000], type=tz_ts)
     # with pytest.warns(Warning):
-    tz_s: pl.Series = pl.from_arrow(tz_data)  # type: ignore
+    tz_s: pl.Series = pl.from_arrow(tz_data)  # type: ignore[assignment]
 
     # timezones have no effect, i.e. `s` equals `tz_s`
     assert not s.series_equal(tz_s)
@@ -234,7 +237,7 @@ def test_truncate() -> None:
 
 def test_date_range() -> None:
     result = pl.date_range(
-        datetime(1985, 1, 1), datetime(2015, 7, 1), timedelta(days=1, hours=12)
+        date(1985, 1, 1), date(2015, 7, 1), timedelta(days=1, hours=12)
     )
     assert len(result) == 7426
     assert result.dt[0] == datetime(1985, 1, 1)
@@ -242,14 +245,38 @@ def test_date_range() -> None:
     assert result.dt[2] == datetime(1985, 1, 4, 0, 0)
     assert result.dt[-1] == datetime(2015, 6, 30, 12, 0)
 
-    for tu in ["ns", "ms"]:
-        rng = pl.date_range(
-            datetime(2020, 1, 1), datetime(2020, 1, 2), "2h", time_unit=tu
-        )
+    for tu in DTYPE_TEMPORAL_UNITS:
+        rng = pl.date_range(datetime(2020, 1, 1), date(2020, 1, 2), "2h", time_unit=tu)
         assert rng.time_unit == tu
         assert rng.shape == (13,)
         assert rng.dt[0] == datetime(2020, 1, 1)
         assert rng.dt[-1] == datetime(2020, 1, 2)
+
+    # if low/high are both date, range is also be date _iif_ the granularity is >= 1d
+    result = pl.date_range(date(2022, 1, 1), date(2022, 3, 1), "1mo", name="drange")
+    assert result.to_list() == [date(2022, 1, 1), date(2022, 2, 1), date(2022, 3, 1)]
+    assert result.name == "drange"
+
+    result = pl.date_range(date(2022, 1, 1), date(2022, 1, 2), "1h30m")
+    assert result == [
+        datetime(2022, 1, 1, 0, 0),
+        datetime(2022, 1, 1, 1, 30),
+        datetime(2022, 1, 1, 3, 0),
+        datetime(2022, 1, 1, 4, 30),
+        datetime(2022, 1, 1, 6, 0),
+        datetime(2022, 1, 1, 7, 30),
+        datetime(2022, 1, 1, 9, 0),
+        datetime(2022, 1, 1, 10, 30),
+        datetime(2022, 1, 1, 12, 0),
+        datetime(2022, 1, 1, 13, 30),
+        datetime(2022, 1, 1, 15, 0),
+        datetime(2022, 1, 1, 16, 30),
+        datetime(2022, 1, 1, 18, 0),
+        datetime(2022, 1, 1, 19, 30),
+        datetime(2022, 1, 1, 21, 0),
+        datetime(2022, 1, 1, 22, 30),
+        datetime(2022, 1, 2, 0, 0),
+    ]
 
 
 def test_date_comp() -> None:
@@ -264,8 +291,8 @@ def test_date_comp() -> None:
     assert (a < one).to_list() == [False, False]
     assert (a <= one).to_list() == [True, False]
 
-    one = date(2001, 1, 1)  # type: ignore
-    two = date(2001, 1, 2)  # type: ignore
+    one = date(2001, 1, 1)  # type: ignore[assignment]
+    two = date(2001, 1, 2)  # type: ignore[assignment]
     a = pl.Series("a", [one, two])
     assert (a == one).to_list() == [True, False]
     assert (a != one).to_list() == [False, True]
@@ -275,14 +302,14 @@ def test_date_comp() -> None:
     assert (a <= one).to_list() == [True, False]
 
     # also test if the conversion stays correct with wide date ranges
-    one = date(201, 1, 1)  # type: ignore
-    two = date(201, 1, 2)  # type: ignore
+    one = date(201, 1, 1)  # type: ignore[assignment]
+    two = date(201, 1, 2)  # type: ignore[assignment]
     a = pl.Series("a", [one, two])
     assert (a == one).to_list() == [True, False]
     assert (a == two).to_list() == [False, True]
 
-    one = date(5001, 1, 1)  # type: ignore
-    two = date(5001, 1, 2)  # type: ignore
+    one = date(5001, 1, 1)  # type: ignore[assignment]
+    two = date(5001, 1, 2)  # type: ignore[assignment]
     a = pl.Series("a", [one, two])
     assert (a == one).to_list() == [True, False]
     assert (a == two).to_list() == [False, True]
@@ -458,6 +485,9 @@ def test_upsample() -> None:
     up = df.upsample(
         time_column="time", every="1mo", by="admin", maintain_order=True
     ).select(pl.all().forward_fill())
+    # this print will panic if timezones feature is not activated
+    # don't remove
+    print(up)
 
     expected = pl.DataFrame(
         {
@@ -501,7 +531,7 @@ def test_microseconds_accuracy() -> None:
         ),
     )
 
-    assert pl.from_arrow(a)["timestamp"].to_list() == timestamps  # type: ignore
+    assert pl.from_arrow(a)["timestamp"].to_list() == timestamps  # type: ignore[index]
 
 
 def test_cast_time_units() -> None:
@@ -536,7 +566,7 @@ def test_read_utc_times_parquet() -> None:
 def test_epoch() -> None:
     dates = pl.Series("dates", [datetime(2001, 1, 1), datetime(2001, 2, 1, 10, 8, 9)])
 
-    for unit in ["ns", "us", "ms"]:
+    for unit in DTYPE_TEMPORAL_UNITS:
         assert dates.dt.epoch(unit).series_equal(dates.dt.timestamp(unit))
 
     assert dates.dt.epoch("s").series_equal(dates.dt.timestamp("ms") // 1000)
@@ -857,7 +887,8 @@ def test_datetime_strptime_patterns() -> None:
     df = pl.Series(
         "date",
         [
-            "09-05-2019" "2018-09-05",
+            "09-05-2019",
+            "2018-09-05",
             "2018-09-05T04:05:01",
             "2018-09-05T04:24:01.9",
             "2018-09-05T04:24:02.11",
@@ -956,8 +987,8 @@ def test_datetime_units() -> None:
     )
     names = set(df.columns)
 
-    for unit in ["ns", "us", "ms"]:
-        subset = names - set([unit])
+    for unit in DTYPE_TEMPORAL_UNITS:
+        subset = names - {unit}
 
         assert (
             len(set(df.select([pl.all().exclude(pl.Datetime(unit))]).columns) - subset)
@@ -979,7 +1010,7 @@ def test_datetime_instance_selection() -> None:
         ],
     )
 
-    for tu in ["ns", "us", "ms"]:
+    for tu in DTYPE_TEMPORAL_UNITS:
         assert df.select(pl.col([pl.Datetime(tu)])).dtypes == [pl.Datetime(tu)]
 
 
@@ -1038,15 +1069,157 @@ def test_groupby_rolling_by_ordering() -> None:
     ).to_dict(
         False
     ) == {
-        "key": ["A", "A", "B", "B", "A", "B", "A"],
+        "key": ["A", "A", "A", "A", "B", "B", "B"],
         "dt": [
             datetime(2022, 1, 1, 0, 1),
             datetime(2022, 1, 1, 0, 2),
+            datetime(2022, 1, 1, 0, 5),
+            datetime(2022, 1, 1, 0, 7),
             datetime(2022, 1, 1, 0, 3),
             datetime(2022, 1, 1, 0, 4),
-            datetime(2022, 1, 1, 0, 5),
             datetime(2022, 1, 1, 0, 6),
-            datetime(2022, 1, 1, 0, 7),
         ],
-        "sum val": [2, 2, 2, 2, 1, 1, 1],
+        "sum val": [2, 2, 1, 1, 2, 2, 1],
     }
+
+
+def test_add_duration_3786() -> None:
+    df = pl.DataFrame(
+        {
+            "datetime": [datetime(2022, 1, 1), datetime(2022, 1, 2)],
+            "add": [1, 2],
+        }
+    )
+    assert df.slice(0, 1).with_columns(
+        [
+            (pl.col("datetime") + pl.duration(weeks="add")).alias("add_weeks"),
+            (pl.col("datetime") + pl.duration(days="add")).alias("add_days"),
+            (pl.col("datetime") + pl.duration(seconds="add")).alias("add_seconds"),
+            (pl.col("datetime") + pl.duration(milliseconds="add")).alias(
+                "add_milliseconds"
+            ),
+            (pl.col("datetime") + pl.duration(hours="add")).alias("add_hours"),
+        ]
+    ).to_dict(False) == {
+        "datetime": [datetime(2022, 1, 1, 0, 0)],
+        "add": [1],
+        "add_weeks": [datetime(2022, 1, 8, 0, 0)],
+        "add_days": [datetime(2022, 1, 2, 0, 0)],
+        "add_seconds": [datetime(2022, 1, 1, 0, 0, 1)],
+        "add_milliseconds": [datetime(2022, 1, 1, 0, 0, 0, 1000)],
+        "add_hours": [datetime(2022, 1, 1, 1, 0)],
+    }
+
+
+def test_groupby_rolling_by_() -> None:
+    df = pl.DataFrame({"group": pl.arange(0, 3, eager=True)}).join(
+        pl.DataFrame(
+            {
+                "datetime": pl.date_range(
+                    datetime(2020, 1, 1), datetime(2020, 1, 5), "1d"
+                ),
+            }
+        ),
+        how="cross",
+    )
+    out = (
+        df.sort("datetime")
+        .groupby_rolling(index_column="datetime", by="group", period="3d")
+        .agg([pl.count().alias("count")])
+    )
+
+    expected = (
+        df.sort(["group", "datetime"])
+        .groupby_rolling(index_column="datetime", by="group", period="3d")
+        .agg([pl.count().alias("count")])
+    )
+    assert out.sort(["group", "datetime"]).frame_equal(expected)
+    assert out.to_dict(False) == {
+        "group": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2],
+        "datetime": [
+            datetime(2020, 1, 1, 0, 0),
+            datetime(2020, 1, 2, 0, 0),
+            datetime(2020, 1, 3, 0, 0),
+            datetime(2020, 1, 4, 0, 0),
+            datetime(2020, 1, 5, 0, 0),
+            datetime(2020, 1, 1, 0, 0),
+            datetime(2020, 1, 2, 0, 0),
+            datetime(2020, 1, 3, 0, 0),
+            datetime(2020, 1, 4, 0, 0),
+            datetime(2020, 1, 5, 0, 0),
+            datetime(2020, 1, 1, 0, 0),
+            datetime(2020, 1, 2, 0, 0),
+            datetime(2020, 1, 3, 0, 0),
+            datetime(2020, 1, 4, 0, 0),
+            datetime(2020, 1, 5, 0, 0),
+        ],
+        "count": [1, 2, 3, 3, 3, 1, 2, 3, 3, 3, 1, 2, 3, 3, 3],
+    }
+
+
+def test_quarter() -> None:
+    assert pl.date_range(
+        datetime(2022, 1, 1), datetime(2022, 12, 1), "1mo"
+    ).dt.quarter().to_list() == [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]
+
+
+def test_date_offset() -> None:
+    out = pl.DataFrame(
+        {"dates": pl.date_range(datetime(2000, 1, 1), datetime(2020, 1, 1), "1y")}
+    ).with_columns(
+        [
+            pl.col("dates").dt.offset_by("1y").alias("date_plus_1y"),
+            pl.col("dates").dt.offset_by("-1y2mo").alias("date_min"),
+        ]
+    )
+
+    assert (out["date_plus_1y"].dt.day() == 1).all()
+    assert (out["date_min"].dt.day() == 1).all()
+    assert out["date_min"].to_list() == [
+        datetime(1998, 11, 1, 0, 0),
+        datetime(1999, 11, 1, 0, 0),
+        datetime(2000, 11, 1, 0, 0),
+        datetime(2001, 11, 1, 0, 0),
+        datetime(2002, 11, 1, 0, 0),
+        datetime(2003, 11, 1, 0, 0),
+        datetime(2004, 11, 1, 0, 0),
+        datetime(2005, 11, 1, 0, 0),
+        datetime(2006, 11, 1, 0, 0),
+        datetime(2007, 11, 1, 0, 0),
+        datetime(2008, 11, 1, 0, 0),
+        datetime(2009, 11, 1, 0, 0),
+        datetime(2010, 11, 1, 0, 0),
+        datetime(2011, 11, 1, 0, 0),
+        datetime(2012, 11, 1, 0, 0),
+        datetime(2013, 11, 1, 0, 0),
+        datetime(2014, 11, 1, 0, 0),
+        datetime(2015, 11, 1, 0, 0),
+        datetime(2016, 11, 1, 0, 0),
+        datetime(2017, 11, 1, 0, 0),
+        datetime(2018, 11, 1, 0, 0),
+    ]
+
+
+def test_sorted_unique() -> None:
+    assert (
+        pl.DataFrame(
+            [pl.Series("dt", [date(2015, 6, 24), date(2015, 6, 23)], dtype=pl.Date)]
+        )
+        .sort("dt")
+        .unique()
+    ).to_dict(False) == {"dt": [date(2015, 6, 23), date(2015, 6, 24)]}
+
+
+def test_time_zero_3828() -> None:
+    assert pl.Series(values=[time(0)], dtype=pl.Time).to_list() == [time(0)]
+
+
+def test_time_microseconds_3843() -> None:
+    in_val = [time(0, 9, 11, 558332)]
+    s = pl.Series(in_val)
+    assert s.to_list() == in_val
+
+
+def test_year_empty_df() -> None:
+    df = pl.DataFrame(pl.Series(name="date", dtype=pl.Date))
+    assert df.select(pl.col("date").dt.year()).dtypes == [pl.Int32]

@@ -1,5 +1,5 @@
 use parking_lot::Mutex;
-#[cfg(any(feature = "csv-file", feature = "parquet"))]
+#[cfg(any(feature = "ipc", feature = "csv-file", feature = "parquet"))]
 use std::path::PathBuf;
 use std::{cell::Cell, fmt::Debug, sync::Arc};
 
@@ -46,10 +46,6 @@ pub enum Context {
 // https://stackoverflow.com/questions/1031076/what-are-projection-and-selection
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(
-    all(feature = "serde", feature = "object"),
-    serde(bound(deserialize = "'de: 'static"))
-)]
 pub enum LogicalPlan {
     #[cfg_attr(feature = "serde", serde(skip))]
     AnonymousScan {
@@ -94,7 +90,7 @@ pub enum LogicalPlan {
     IpcScan {
         path: PathBuf,
         schema: SchemaRef,
-        options: IpcScanOptions,
+        options: IpcScanOptionsInner,
         predicate: Option<Expr>,
         aggregate: Vec<Expr>,
     },

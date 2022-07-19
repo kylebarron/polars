@@ -24,12 +24,6 @@ use std::borrow::Cow;
 
 macro_rules! impl_dyn_series {
     ($ca: ident) => {
-        impl IntoSeries for $ca {
-            fn into_series(self) -> Series {
-                Series(Arc::new(SeriesWrap(self)))
-            }
-        }
-
         impl private::PrivateSeries for SeriesWrap<$ca> {
             fn _field(&self) -> Cow<Field> {
                 Cow::Borrowed(self.0.ref_field())
@@ -52,8 +46,8 @@ macro_rules! impl_dyn_series {
                 self.0.cummin(reverse).into_series()
             }
 
-            fn _set_sorted(&mut self, reverse: bool) {
-                self.0.set_sorted(reverse)
+            fn _set_sorted(&mut self, is_sorted: IsSorted) {
+                self.0.set_sorted2(is_sorted)
             }
 
             unsafe fn equal_element(
@@ -279,7 +273,7 @@ macro_rules! impl_dyn_series {
                 let mut out = ChunkTake::take_unchecked(&self.0, (&*idx).into());
 
                 if self.0.is_sorted() && (idx.is_sorted() || idx.is_sorted_reverse()) {
-                    out.set_sorted(idx.is_sorted_reverse())
+                    out.set_sorted2(idx.is_sorted2())
                 }
 
                 Ok(out.into_series())
@@ -419,20 +413,6 @@ macro_rules! impl_dyn_series {
             }
             fn clone_inner(&self) -> Arc<dyn SeriesTrait> {
                 Arc::new(SeriesWrap(Clone::clone(&self.0)))
-            }
-
-            fn pow(&self, exponent: f64) -> Result<Series> {
-                let f_err = || {
-                    Err(PolarsError::InvalidOperation(
-                        format!("power operation not supported on dtype {:?}", self.dtype()).into(),
-                    ))
-                };
-
-                match self.dtype() {
-                    DataType::Utf8 | DataType::List(_) | DataType::Boolean => f_err(),
-                    DataType::Float32 => Ok(self.0.pow_f32(exponent as f32).into_series()),
-                    _ => Ok(self.0.pow_f64(exponent).into_series()),
-                }
             }
 
             fn peak_max(&self) -> BooleanChunked {

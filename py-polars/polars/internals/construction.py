@@ -1,25 +1,21 @@
+from __future__ import annotations
+
+import sys
 import warnings
 from datetime import date, datetime, time, timedelta
 from itertools import zip_longest
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    Union,
-)
-
-import numpy as np
+from typing import TYPE_CHECKING, Any, Iterable, Sequence
 
 from polars import internals as pli
-from polars.datatypes import Categorical, DataType, Date, Datetime, Duration, Float32
-from polars.datatypes import List as ListDType
 from polars.datatypes import (
+    Categorical,
+    ColumnsType,
+    Date,
+    Datetime,
+    Duration,
+    Float32,
+    List,
+    PolarsDataType,
     Time,
     dtype_to_arrow_type,
     dtype_to_py_type,
@@ -34,38 +30,42 @@ from polars.datatypes_constructor import (
 )
 from polars.utils import threadpool_size
 
+if TYPE_CHECKING:
+    import pandas as pd
+
 try:
     from polars.polars import PyDataFrame, PySeries
 
     _DOCUMENTING = False
-except ImportError:  # pragma: no cover
+except ImportError:
     _DOCUMENTING = True
 
-if TYPE_CHECKING:  # pragma: no cover
-    import pandas as pd
+try:
+    import numpy as np
+
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
+
+try:
     import pyarrow as pa
 
     _PYARROW_AVAILABLE = True
+except ImportError:
+    _PYARROW_AVAILABLE = False
+
+if sys.version_info >= (3, 8):
+    from typing import Literal
 else:
-    try:
-        import pyarrow as pa
+    from typing_extensions import Literal
 
-        _PYARROW_AVAILABLE = True
-    except ImportError:  # pragma: no cover
-        _PYARROW_AVAILABLE = False
-
-ColumnsType = Union[
-    Union[List[str], Sequence[str]],
-    Dict[str, Type[DataType]],
-    Sequence[Tuple[str, Union[Type[DataType], DataType]]],
-]
 
 ################################
 # Series constructor interface #
 ################################
 
 
-def series_to_pyseries(name: str, values: "pli.Series") -> "PySeries":
+def series_to_pyseries(name: str, values: pli.Series) -> PySeries:
     """
     Construct a PySeries from a Polars Series.
     """
@@ -73,9 +73,7 @@ def series_to_pyseries(name: str, values: "pli.Series") -> "PySeries":
     return values.inner()
 
 
-def arrow_to_pyseries(
-    name: str, values: "pa.Array", rechunk: bool = True
-) -> "PySeries":
+def arrow_to_pyseries(name: str, values: pa.Array, rechunk: bool = True) -> PySeries:
     """
     Construct a PySeries from an Arrow array.
     """
@@ -98,7 +96,7 @@ def arrow_to_pyseries(
 
 def numpy_to_pyseries(
     name: str, values: np.ndarray, strict: bool = True, nan_to_null: bool = False
-) -> "PySeries":
+) -> PySeries:
     """
     Construct a PySeries from a numpy array.
     """
@@ -119,7 +117,7 @@ def numpy_to_pyseries(
         return PySeries.new_object(name, values, strict)
 
 
-def _get_first_non_none(values: Sequence[Optional[Any]]) -> Any:
+def _get_first_non_none(values: Sequence[Any | None]) -> Any:
     """
     Return the first value from a sequence that isn't None.
 
@@ -129,7 +127,7 @@ def _get_first_non_none(values: Sequence[Optional[Any]]) -> Any:
         return next((v for v in values if v is not None), None)
 
 
-def sequence_from_anyvalue_or_object(name: str, values: Sequence[Any]) -> "PySeries":
+def sequence_from_anyvalue_or_object(name: str, values: Sequence[Any]) -> PySeries:
     """
     Last resort conversion. AnyValues are most flexible and if they fail we go for object types
     """
@@ -144,21 +142,21 @@ def sequence_from_anyvalue_or_object(name: str, values: Sequence[Any]) -> "PySer
 def sequence_to_pyseries(
     name: str,
     values: Sequence[Any],
-    dtype: Optional[Union[Type[DataType], DataType]] = None,
+    dtype: PolarsDataType | None = None,
     strict: bool = True,
-) -> "PySeries":
+) -> PySeries:
     """
     Construct a PySeries from a sequence.
     """
-    dtype_: Optional[type] = None
-    nested_dtype: Optional[Union[Type[DataType], type]] = None
-    temporal_unit: Optional[str] = None
+    dtype_: type | None = None
+    nested_dtype: PolarsDataType | type | None = None
+    temporal_unit: str | None = None
 
     # empty sequence defaults to Float32 type
     if not values and dtype is None:
         dtype = Float32
     # lists defer to subsequent handling; identify nested type
-    elif dtype == ListDType:
+    elif dtype == List:
         nested_dtype = getattr(dtype, "inner", None)
         dtype_ = list
 
@@ -170,9 +168,11 @@ def sequence_to_pyseries(
     if value is not None:
         if dtype in py_temporal_types and isinstance(value, int):
             dtype = py_type_to_dtype(dtype)  # construct from integer
-        elif dtype in pl_temporal_types and not isinstance(value, int):
+        elif (
+            dtype in pl_temporal_types or type(dtype) in pl_temporal_types
+        ) and not isinstance(value, int):
             temporal_unit = getattr(dtype, "tu", None)
-            dtype_ = dtype_to_py_type(dtype)  # construct from python type
+            dtype_ = dtype_to_py_type(dtype)  # type: ignore[arg-type]
 
     if (dtype is not None) and is_polars_dtype(dtype) and (dtype_ is None):
         constructor = polars_type_to_constructor(dtype)
@@ -246,7 +246,9 @@ def sequence_to_pyseries(
                         if is_polars_dtype(nested_dtype)
                         else py_type_to_arrow_type
                     )
-                    nested_arrow_dtype = to_arrow_type(nested_dtype)
+                    nested_arrow_dtype = to_arrow_type(
+                        nested_dtype  # type: ignore[arg-type]
+                    )
                 except ValueError:  # pragma: no cover
                     return sequence_from_anyvalue_or_object(name, values)
                 try:
@@ -276,10 +278,10 @@ def sequence_to_pyseries(
 
 
 def _pandas_series_to_arrow(
-    values: Union["pd.Series", "pd.DatetimeIndex"],
+    values: pd.Series | pd.DatetimeIndex,
     nan_to_none: bool = True,
-    min_len: Optional[int] = None,
-) -> "pa.Array":
+    min_len: int | None = None,
+) -> pa.Array:
     """
     Convert a pandas Series to an Arrow Array.
 
@@ -297,21 +299,21 @@ def _pandas_series_to_arrow(
     """
     dtype = values.dtype
     if dtype == "object" and len(values) > 0:
-        if isinstance(_get_first_non_none(values.values), str):  # type: ignore
-            return pa.array(values, pa.large_utf8(), from_pandas=nan_to_none)
+        first_non_none = _get_first_non_none(values.values)  # type: ignore[arg-type]
 
-        # array is null array, we set to a float64 array
-        if values.values[0] is None and min_len is not None:
-            return pa.nulls(min_len, pa.float64())
-        else:
-            return pa.array(values, from_pandas=nan_to_none)
+        if isinstance(first_non_none, str):
+            return pa.array(values, pa.large_utf8(), from_pandas=nan_to_none)
+        if first_non_none is None:
+            return pa.nulls(min_len, pa.large_utf8())
+
+        return pa.array(values, from_pandas=nan_to_none)
     else:
         return pa.array(values, from_pandas=nan_to_none)
 
 
 def pandas_to_pyseries(
-    name: str, values: Union["pd.Series", "pd.DatetimeIndex"], nan_to_none: bool = True
-) -> "PySeries":
+    name: str, values: pd.Series | pd.DatetimeIndex, nan_to_none: bool = True
+) -> PySeries:
     """
     Construct a PySeries from a pandas Series or DatetimeIndex.
     """
@@ -333,8 +335,8 @@ def pandas_to_pyseries(
 
 
 def _handle_columns_arg(
-    data: List["PySeries"], columns: Optional[Sequence[str]] = None
-) -> List["PySeries"]:
+    data: list[PySeries], columns: Sequence[str] | None = None
+) -> list[PySeries]:
     """
     Rename data according to columns argument.
     """
@@ -351,7 +353,7 @@ def _handle_columns_arg(
             raise ValueError("Dimensions of columns arg must match data dimensions.")
 
 
-def _post_apply_columns(pydf: "PyDataFrame", columns: ColumnsType) -> "PyDataFrame":
+def _post_apply_columns(pydf: PyDataFrame, columns: ColumnsType) -> PyDataFrame:
     """
     Apply 'columns' param _after_ PyDataFrame creation (if no alternative).
     """
@@ -371,10 +373,10 @@ def _post_apply_columns(pydf: "PyDataFrame", columns: ColumnsType) -> "PyDataFra
 
 
 def _unpack_columns(
-    columns: Optional[ColumnsType],
-    lookup_names: Optional[Iterable[str]] = None,
-    n_expected: Optional[int] = None,
-) -> Tuple[List[str], Dict[str, Union[Type[DataType], DataType]]]:
+    columns: ColumnsType | None,
+    lookup_names: Iterable[str] | None = None,
+    n_expected: int | None = None,
+) -> tuple[list[str], dict[str, PolarsDataType]]:
     """
     Unpack column names and create dtype lookup for any (name,dtype) pairs or schema dict input.
     """
@@ -382,7 +384,7 @@ def _unpack_columns(
         columns = list(columns.items())
     column_names = [
         (col or f"column_{i}") if isinstance(col, str) else col[0]
-        for i, col in enumerate((columns or []))
+        for i, col in enumerate(columns or [])
     ]
     if not column_names and n_expected:
         column_names = [f"column_{i}" for i in range(n_expected)]
@@ -400,8 +402,8 @@ def _unpack_columns(
 
 
 def dict_to_pydf(
-    data: Dict[str, Sequence[Any]], columns: Optional[ColumnsType] = None
-) -> "PyDataFrame":
+    data: dict[str, Sequence[Any]], columns: ColumnsType | None = None
+) -> PyDataFrame:
     """
     Construct a PyDataFrame from a dictionary of sequences.
     """
@@ -421,38 +423,102 @@ def dict_to_pydf(
         data_series = _handle_columns_arg(data_series, columns=columns)
         return PyDataFrame(data_series)
 
-    all_numpy = True
-    for val in data.values():
-        # only start a thread pool from a reasonable size.
-        all_numpy = all_numpy and isinstance(val, np.ndarray) and len(val) > 1000
-        if not all_numpy:
-            break
+    if _NUMPY_AVAILABLE:
+        all_numpy = True
+        for val in data.values():
+            # only start a thread pool from a reasonable size.
+            all_numpy = all_numpy and isinstance(val, np.ndarray) and len(val) > 1000
+            if not all_numpy:
+                break
 
-    if all_numpy:
-        # yes, multi-threading was easier in python here
-        # we cannot run multiple threads that run python code
-        # and release the gil in pyo3
-        # it will deadlock.
+        if all_numpy:
+            # yes, multi-threading was easier in python here
+            # we cannot run multiple threads that run python code
+            # and release the gil in pyo3
+            # it will deadlock.
 
-        # dummy is threaded
-        import multiprocessing.dummy
+            # dummy is threaded
+            import multiprocessing.dummy
 
-        pool_size = threadpool_size()
-        pool = multiprocessing.dummy.Pool(pool_size)
-        data_series = pool.map(
-            lambda t: pli.Series(t[0], t[1]).inner(), [(k, v) for k, v in data.items()]
-        )
-        return PyDataFrame(data_series)
+            pool_size = threadpool_size()
+            pool = multiprocessing.dummy.Pool(pool_size)
+            data_series = pool.map(
+                lambda t: pli.Series(t[0], t[1]).inner(),
+                [(k, v) for k, v in data.items()],
+            )
+            return PyDataFrame(data_series)
 
     # fast path
     return PyDataFrame.read_dict(data)
 
 
+def sequence_to_pydf(
+    data: Sequence[Any],
+    columns: ColumnsType | None = None,
+    orient: Literal["col", "row"] | None = None,
+) -> PyDataFrame:
+    """
+    Construct a PyDataFrame from a sequence.
+    """
+    data_series: list[PySeries]
+
+    if len(data) == 0:
+        return dict_to_pydf({}, columns=columns)
+
+    elif isinstance(data[0], pli.Series):
+        series_names = [s.name for s in data]
+        columns, dtypes = _unpack_columns(columns or series_names, n_expected=len(data))
+        data_series = []
+        for i, s in enumerate(data):
+            if not s.name:  # TODO: Replace by `if s.name is None` once allowed
+                s.rename(columns[i], in_place=True)
+
+            new_dtype = dtypes.get(columns[i])
+            if new_dtype and new_dtype != s.dtype:
+                s = s.cast(new_dtype)
+
+            data_series.append(s.inner())
+
+    elif isinstance(data[0], dict):
+        pydf = PyDataFrame.read_dicts(data)
+        if columns:
+            pydf = _post_apply_columns(pydf, columns)
+        return pydf
+
+    elif isinstance(data[0], Sequence) and not isinstance(data[0], str):
+        # Infer orientation
+        if orient is None and columns is not None:
+            orient = "col" if len(columns) == len(data) else "row"
+
+        if orient == "row":
+            pydf = PyDataFrame.read_rows(data)
+            if columns:
+                pydf = _post_apply_columns(pydf, columns)
+            return pydf
+        elif orient == "col" or orient is None:
+            columns, dtypes = _unpack_columns(columns, n_expected=len(data))
+            data_series = [
+                pli.Series(columns[i], data[i], dtypes.get(columns[i])).inner()
+                for i in range(len(data))
+            ]
+        else:
+            raise ValueError(
+                f"orient must be one of {{'col', 'row', None}}, got {orient} instead."
+            )
+
+    else:
+        columns, dtypes = _unpack_columns(columns, n_expected=1)
+        data_series = [pli.Series(columns[0], data, dtypes.get(columns[0])).inner()]
+
+    data_series = _handle_columns_arg(data_series, columns=columns)
+    return PyDataFrame(data_series)
+
+
 def numpy_to_pydf(
     data: np.ndarray,
-    columns: Optional[ColumnsType] = None,
-    orient: Optional[str] = None,
-) -> "PyDataFrame":
+    columns: ColumnsType | None = None,
+    orient: Literal["col", "row"] | None = None,
+) -> PyDataFrame:
     """
     Construct a PyDataFrame from a numpy ndarray.
     """
@@ -495,11 +561,15 @@ def numpy_to_pydf(
                 pli.Series(columns[i], data[:, i], dtypes.get(columns[i])).inner()
                 for i in range(n_columns)
             ]
-        else:
+        elif orient == "col":
             data_series = [
                 pli.Series(columns[i], data[i], dtypes.get(columns[i])).inner()
                 for i in range(n_columns)
             ]
+        else:
+            raise ValueError(
+                f"orient must be one of {{'col', 'row', None}}, got {orient} instead."
+            )
     else:
         raise ValueError("A numpy array should not have more than two dimensions.")
 
@@ -507,67 +577,9 @@ def numpy_to_pydf(
     return PyDataFrame(data_series)
 
 
-def sequence_to_pydf(
-    data: Sequence[Any],
-    columns: Optional[ColumnsType] = None,
-    orient: Optional[str] = None,
-) -> "PyDataFrame":
-    """
-    Construct a PyDataFrame from a sequence.
-    """
-    data_series: List["PySeries"]
-
-    if len(data) == 0:
-        return dict_to_pydf({}, columns=columns)
-
-    elif isinstance(data[0], pli.Series):
-        series_names = [s.name for s in data]
-        columns, dtypes = _unpack_columns(columns or series_names, n_expected=len(data))
-        data_series = []
-        for i, s in enumerate(data):
-            if not s.name:  # TODO: Replace by `if s.name is None` once allowed
-                s.rename(columns[i], in_place=True)
-
-            new_dtype = dtypes.get(columns[i])
-            if new_dtype and new_dtype != s.dtype:
-                s = s.cast(new_dtype)
-
-            data_series.append(s.inner())
-
-    elif isinstance(data[0], dict):
-        pydf = PyDataFrame.read_dicts(data)
-        if columns:
-            pydf = _post_apply_columns(pydf, columns)
-        return pydf
-
-    elif isinstance(data[0], Sequence) and not isinstance(data[0], str):
-        # Infer orientation
-        if orient is None and columns is not None:
-            orient = "col" if len(columns) == len(data) else "row"
-
-        if orient == "row":
-            pydf = PyDataFrame.read_rows(data)
-            if columns:
-                pydf = _post_apply_columns(pydf, columns)
-            return pydf
-        else:
-            columns, dtypes = _unpack_columns(columns, n_expected=len(data))
-            data_series = [
-                pli.Series(columns[i], data[i], dtypes.get(columns[i])).inner()
-                for i in range(len(data))
-            ]
-
-    else:
-        columns, dtypes = _unpack_columns(columns, n_expected=1)
-        data_series = [pli.Series(columns[0], data, dtypes.get(columns[0])).inner()]
-
-    data_series = _handle_columns_arg(data_series, columns=columns)
-    return PyDataFrame(data_series)
-
-
 def arrow_to_pydf(
-    data: "pa.Table", columns: Optional[ColumnsType] = None, rechunk: bool = True
-) -> "PyDataFrame":
+    data: pa.Table, columns: ColumnsType | None = None, rechunk: bool = True
+) -> PyDataFrame:
     """
     Construct a PyDataFrame from an Arrow Table.
     """
@@ -631,9 +643,7 @@ def arrow_to_pydf(
     return pydf
 
 
-def series_to_pydf(
-    data: "pli.Series", columns: Optional[ColumnsType] = None
-) -> "PyDataFrame":
+def series_to_pydf(data: pli.Series, columns: ColumnsType | None = None) -> PyDataFrame:
     """
     Construct a PyDataFrame from a Polars Series.
     """
@@ -650,11 +660,11 @@ def series_to_pydf(
 
 
 def pandas_to_pydf(
-    data: "pd.DataFrame",
-    columns: Optional[ColumnsType] = None,
+    data: pd.DataFrame,
+    columns: ColumnsType | None = None,
     rechunk: bool = True,
     nan_to_none: bool = True,
-) -> "PyDataFrame":
+) -> PyDataFrame:
     """
     Construct a PyDataFrame from a pandas DataFrame.
     """
@@ -673,7 +683,7 @@ def pandas_to_pydf(
     return arrow_to_pydf(arrow_table, columns=columns, rechunk=rechunk)
 
 
-def coerce_arrow(array: "pa.Array", rechunk: bool = True) -> "pa.Array":
+def coerce_arrow(array: pa.Array, rechunk: bool = True) -> pa.Array:
     # note: Decimal256 could not be cast to float
     if isinstance(array.type, pa.Decimal128Type):
         array = pa.compute.cast(array, pa.float64())

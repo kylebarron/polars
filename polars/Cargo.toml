@@ -45,6 +45,9 @@ json = ["polars-io", "polars-io/json"]
 # support for arrows ipc file parsing
 ipc = ["polars-io", "polars-io/ipc", "polars-lazy/ipc"]
 
+# support for arrows streaming ipc file parsing
+ipc_streaming = ["polars-io", "polars-io/ipc_streaming", "polars-lazy/ipc"]
+
 # support for apache avro file parsing
 avro = ["polars-io", "polars-io/avro"]
 
@@ -113,6 +116,9 @@ list_to_struct = ["polars-ops/list_to_struct", "polars-lazy/list_to_struct"]
 describe = ["polars-core/describe"]
 timezones = ["polars-core/timezones"]
 string_justify = ["polars-lazy/string_justify", "polars-ops/string_justify"]
+arg_where = ["polars-lazy/arg_where"]
+date_offset = ["polars-lazy/date_offset"]
+trigonometry = ["polars-lazy/trigonometry"]
 
 test = [
   "lazy",
@@ -129,6 +135,7 @@ test = [
   "abs",
   "parquet",
   "ipc",
+  "ipc_streaming",
 ]
 
 # don't use this
@@ -194,6 +201,7 @@ docs-selection = [
   "json",
   "parquet",
   "ipc",
+  "ipc_streaming",
   "dtype-full",
   "is_in",
   "sort_multiple",
@@ -235,6 +243,7 @@ docs-selection = [
   "list_eval",
   "cumulative_eval",
   "timezones",
+  "arg_where",
 ]
 
 bench = [

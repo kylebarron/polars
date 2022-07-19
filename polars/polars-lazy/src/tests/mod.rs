@@ -14,6 +14,8 @@ mod predicate_queries;
 mod projection_queries;
 #[cfg(feature = "test")]
 mod queries;
+#[cfg(feature = "strings")]
+mod tpch;
 
 fn load_df() -> DataFrame {
     df!("a" => &[1, 2, 3, 4, 5],
@@ -88,13 +90,18 @@ fn init_files() {
 fn scan_foods_parquet(parallel: bool) -> LazyFrame {
     init_files();
     let out_path = FOODS_PARQUET.to_string();
+    let parallel = if parallel {
+        ParallelStrategy::Auto
+    } else {
+        ParallelStrategy::None
+    };
 
     let args = ScanArgsParquet {
         n_rows: None,
         cache: false,
         parallel,
         rechunk: true,
-        row_count: None,
+        ..Default::default()
     };
     LazyFrame::scan_parquet(out_path, args).unwrap()
 }

@@ -1,7 +1,7 @@
-from test_series import verify_series_and_expr_api
+from __future__ import annotations
 
 import polars as pl
-from polars import testing
+from polars.testing import assert_series_equal, verify_series_and_expr_api
 
 
 def test_horizontal_agg(fruits_cars: pl.DataFrame) -> None:
@@ -53,22 +53,22 @@ def test_flatten_explode() -> None:
     df = pl.Series("a", ["Hello", "World"])
     expected = pl.Series("a", ["H", "e", "l", "l", "o", "W", "o", "r", "l", "d"])
 
-    result: pl.Series = df.to_frame().select(pl.col("a").flatten())[:, 0]  # type: ignore
-    testing.assert_series_equal(result, expected)
+    result: pl.Series = df.to_frame().select(pl.col("a").flatten())[:, 0]  # type: ignore[assignment]
+    assert_series_equal(result, expected)
 
-    result: pl.Series = df.to_frame().select(pl.col("a").explode())[:, 0]  # type: ignore
-    testing.assert_series_equal(result, expected)
+    result: pl.Series = df.to_frame().select(pl.col("a").explode())[:, 0]  # type: ignore[no-redef]
+    assert_series_equal(result, expected)
 
 
 def test_min_nulls_consistency() -> None:
     df = pl.DataFrame({"a": [None, 2, 3], "b": [4, None, 6], "c": [7, 5, 0]})
     out = df.select([pl.min(["a", "b", "c"])]).to_series()
     expected = pl.Series("min", [4, 2, 0])
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
 
     out = df.select([pl.max(["a", "b", "c"])]).to_series()
     expected = pl.Series("max", [7, 5, 6])
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
 
 
 def test_list_join_strings() -> None:
@@ -225,15 +225,30 @@ def test_null_count_expr() -> None:
 
 
 def test_power_by_expression() -> None:
-    assert pl.DataFrame(
+    out = pl.DataFrame(
         {"a": [1, None, None, 4, 5, 6], "b": [1, 2, None, 4, None, 6]}
-    ).select([(pl.col("a") ** pl.col("b")).alias("pow")])["pow"].to_list() == [
+    ).select(
+        [
+            (pl.col("a") ** pl.col("b")).alias("pow"),
+            (2 ** pl.col("b")).alias("pow_left"),
+        ]
+    )
+
+    assert out["pow"].to_list() == [
         1.0,
         None,
         None,
         256.0,
         None,
         46656.0,
+    ]
+    assert out["pow_left"].to_list() == [
+        2.0,
+        4.0,
+        None,
+        16.0,
+        None,
+        64.0,
     ]
 
 
@@ -262,3 +277,20 @@ def test_regex_in_filter() -> None:
     assert df.filter(
         pl.fold(acc=False, f=lambda acc, s: acc | s, exprs=(pl.col("^nrs|flt*$") < 3))
     ).row(0) == (1, "foo", 1.0)
+
+
+def test_arr_contains() -> None:
+    df_groups = pl.DataFrame(
+        {
+            "str_list": [
+                ["cat", "mouse", "dog"],
+                ["dog", "mouse", "cat"],
+                ["dog", "mouse", "aardvark"],
+            ],
+        }
+    )
+    assert df_groups.lazy().filter(
+        pl.col("str_list").arr.contains("cat")
+    ).collect().to_dict(False) == {
+        "str_list": [["cat", "mouse", "dog"], ["dog", "mouse", "cat"]]
+    }

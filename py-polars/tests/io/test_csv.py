@@ -1,16 +1,30 @@
-# flake8: noqa: W191,E101
+from __future__ import annotations
+
 import gzip
 import io
 import os
+import textwrap
 import zlib
 from datetime import date
 from pathlib import Path
-from typing import Dict, List, Type, Union
 
 import pytest
 
 import polars as pl
 from polars import DataType
+
+
+def test_quoted_date() -> None:
+    csv = textwrap.dedent(
+        """a,b
+    "2022-01-01",1
+    "2022-01-02",2
+    """
+    )
+
+    expected = pl.DataFrame({"a": [date(2022, 1, 1), date(2022, 1, 2)], "b": [1, 2]})
+
+    assert pl.read_csv(csv.encode(), parse_dates=True).frame_equal(expected)
 
 
 def test_to_from_buffer(df_no_lists: pl.DataFrame) -> None:
@@ -49,29 +63,38 @@ def test_read_web_file() -> None:
 
 
 def test_csv_null_values() -> None:
-    csv = """
-a,b,c
-na,b,c
-a,na,c"""
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        na,b,c
+        a,na,c
+        """
+    )
     f = io.StringIO(csv)
 
     df = pl.read_csv(f, null_values="na")
     assert df[0, "a"] is None
     assert df[1, "b"] is None
 
-    csv = """
-a,b,c
-na,b,c
-a,n/a,c"""
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        na,b,c
+        a,n/a,c
+        """
+    )
     f = io.StringIO(csv)
     df = pl.read_csv(f, null_values=["na", "n/a"])
     assert df[0, "a"] is None
     assert df[1, "b"] is None
 
-    csv = """
-a,b,c
-na,b,c
-a,n/a,c"""
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        na,b,c
+        a,n/a,c
+        """
+    )
     f = io.StringIO(csv)
     df = pl.read_csv(f, null_values={"a": "na", "b": "n/a"})
     assert df[0, "a"] is None
@@ -79,13 +102,15 @@ a,n/a,c"""
 
 
 def test_datetime_parsing() -> None:
-    csv = """
-timestamp,open,high
-2021-01-01 00:00:00,0.00305500,0.00306000
-2021-01-01 00:15:00,0.00298800,0.00300400
-2021-01-01 00:30:00,0.00298300,0.00300100
-2021-01-01 00:45:00,0.00299400,0.00304000
-"""
+    csv = textwrap.dedent(
+        """\
+        timestamp,open,high
+        2021-01-01 00:00:00,0.00305500,0.00306000
+        2021-01-01 00:15:00,0.00298800,0.00300400
+        2021-01-01 00:30:00,0.00298300,0.00300100
+        2021-01-01 00:45:00,0.00299400,0.00304000
+        """
+    )
 
     f = io.StringIO(csv)
     df = pl.read_csv(f, parse_dates=True)
@@ -93,22 +118,56 @@ timestamp,open,high
 
 
 def test_partial_dtype_overwrite() -> None:
-    csv = """
-a,b,c
-1,2,3
-1,2,3
-"""
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        1,2,3
+        1,2,3
+        """
+    )
     f = io.StringIO(csv)
     df = pl.read_csv(f, dtypes=[pl.Utf8])
     assert df.dtypes == [pl.Utf8, pl.Int64, pl.Int64]
 
 
+def test_dtype_overwrite_with_column_name_selection() -> None:
+    csv = textwrap.dedent(
+        """\
+        a,b,c,d
+        1,2,3,4
+        1,2,3,4
+        """
+    )
+    f = io.StringIO(csv)
+    df = pl.read_csv(f, columns=["c", "b", "d"], dtypes=[pl.Int32, pl.Utf8])
+    assert df.dtypes == [pl.Utf8, pl.Int32, pl.Int64]
+
+
+def test_dtype_overwrite_with_column_idx_selection() -> None:
+    csv = textwrap.dedent(
+        """\
+        a,b,c,d
+        1,2,3,4
+        1,2,3,4
+        """
+    )
+    f = io.StringIO(csv)
+    df = pl.read_csv(f, columns=[2, 1, 3], dtypes=[pl.Int32, pl.Utf8])
+    # Columns without an explicit dtype set will get pl.Utf8 if dtypes is a list
+    # if the column selection is done with column indices instead of column names.
+    assert df.dtypes == [pl.Utf8, pl.Int32, pl.Utf8]
+    # Projections are sorted.
+    assert df.columns == ["b", "c", "d"]
+
+
 def test_partial_column_rename() -> None:
-    csv = """
-a,b,c
-1,2,3
-1,2,3
-"""
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        1,2,3
+        1,2,3
+        """
+    )
     f = io.StringIO(csv)
     for use in [True, False]:
         f.seek(0)
@@ -120,12 +179,15 @@ a,b,c
     "col_input, col_out", [([0, 1], ["a", "b"]), ([0, 2], ["a", "c"]), (["b"], ["b"])]
 )
 def test_read_csv_columns_argument(
-    col_input: Union[List[int], List[str]], col_out: List[str]
+    col_input: list[int] | list[str], col_out: list[str]
 ) -> None:
-    csv = """a,b,c
-    1,2,3
-    1,2,3
-    """
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        1,2,3
+        1,2,3
+        """
+    )
     f = io.StringIO(csv)
     df = pl.read_csv(f, columns=col_input)
     assert df.shape[0] == 2
@@ -141,15 +203,18 @@ def test_read_csv_buffer_ownership() -> None:
     )
     # confirm that read_csv succeeded, and didn't close the input buffer (#2696)
     assert df.shape == (2, 3)
+    assert df.rows() == [("😀", 5.55, 333), ("😆", -5.0, 666)]
     assert not buf.closed
 
 
 def test_column_rename_and_dtype_overwrite() -> None:
-    csv = """
-a,b,c
-1,2,3
-1,2,3
-"""
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        1,2,3
+        1,2,3
+        """
+    )
     f = io.StringIO(csv)
     df = pl.read_csv(
         f,
@@ -167,10 +232,12 @@ a,b,c
     )
     assert df.dtypes == [pl.Utf8, pl.Float32]
 
-    csv = """
-1,2,3
-1,2,3
-"""
+    csv = textwrap.dedent(
+        """\
+        1,2,3
+        1,2,3
+        """
+    )
     f = io.StringIO(csv)
     df = pl.read_csv(
         f,
@@ -183,12 +250,14 @@ a,b,c
 
 def test_compressed_csv() -> None:
     # gzip compression
-    csv = """
-a,b,c
-1,a,1.0
-2,b,2.0,
-3,c,3.0
-"""
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        1,a,1.0
+        2,b,2.0,
+        3,c,3.0
+        """
+    )
     fout = io.BytesIO()
     with gzip.GzipFile(fileobj=fout, mode="w") as f:
         f.write(csv.encode())
@@ -244,18 +313,20 @@ def test_empty_bytes() -> None:
 
 
 def test_csq_quote_char() -> None:
-    rolling_stones = """
-    linenum,last_name,first_name
-    1,Jagger,Mick
-    2,O"Brian,Mary
-    3,Richards,Keith
-    4,L"Etoile,Bennet
-    5,Watts,Charlie
-    6,Smith,D"Shawn
-    7,Wyman,Bill
-    8,Woods,Ron
-    9,Jones,Brian
-    """
+    rolling_stones = textwrap.dedent(
+        """\
+        linenum,last_name,first_name
+        1,Jagger,Mick
+        2,O"Brian,Mary
+        3,Richards,Keith
+        4,L"Etoile,Bennet
+        5,Watts,Charlie
+        6,Smith,D"Shawn
+        7,Wyman,Bill
+        8,Woods,Ron
+        9,Jones,Brian
+        """
+    )
 
     assert pl.read_csv(rolling_stones.encode(), quote_char=None).shape == (9, 3)
 
@@ -266,14 +337,18 @@ def test_csv_empty_quotes_char() -> None:
 
 
 def test_ignore_parse_dates() -> None:
-    csv = """a,b,c
-1,i,16200126
-2,j,16250130
-3,k,17220012
-4,l,17290009""".encode()
+    csv = textwrap.dedent(
+        """\
+        a,b,c
+        1,i,16200126
+        2,j,16250130
+        3,k,17220012
+        4,l,17290009
+        """
+    ).encode()
 
     headers = ["a", "b", "c"]
-    dtypes: Dict[str, Type[DataType]] = {
+    dtypes: dict[str, type[DataType]] = {
         k: pl.Utf8 for k in headers
     }  # Forces Utf8 type for every column
     df = pl.read_csv(csv, columns=headers, dtypes=dtypes)
@@ -281,14 +356,17 @@ def test_ignore_parse_dates() -> None:
 
 
 def test_csv_date_handling() -> None:
-    csv = """date
-1745-04-02
-1742-03-21
-1743-06-16
-1730-07-22
-""
-1739-03-16
-"""
+    csv = textwrap.dedent(
+        """\
+        date
+        1745-04-02
+        1742-03-21
+        1743-06-16
+        1730-07-22
+        ""
+        1739-03-16
+        """
+    )
     expected = pl.DataFrame(
         {
             "date": [
@@ -341,13 +419,16 @@ def test_csv_globbing(examples_dir: str) -> None:
 
 
 def test_csv_schema_offset(foods_csv: str) -> None:
-    csv = """metadata
-line
-foo,bar
-1,2
-3,4
-5,6
-""".encode()
+    csv = textwrap.dedent(
+        """\
+        metadata
+        line
+        foo,bar
+        1,2
+        3,4
+        5,6
+        """
+    ).encode()
     df = pl.read_csv(csv, skip_rows=2)
     assert df.columns == ["foo", "bar"]
     assert df.shape == (3, 2)
@@ -382,11 +463,13 @@ def test_write_csv_delimiter() -> None:
 
 
 def test_escaped_null_values() -> None:
-    csv = """
-"a","b","c"
-"a","n/a","NA"
-"None","2","3.0"
-    """
+    csv = textwrap.dedent(
+        """\
+        "a","b","c"
+        "a","n/a","NA"
+        "None","2","3.0"
+        """
+    )
     f = io.StringIO(csv)
     df = pl.read_csv(
         f,
@@ -417,10 +500,14 @@ def quoting_round_trip() -> None:
 
 
 def fallback_chrono_parser() -> None:
-    data = """date_1,date_2
+    data = textwrap.dedent(
+        """\
+    date_1,date_2
     2021-01-01,2021-1-1
     2021-02-02,2021-2-2
-    2021-10-10,2021-10-10"""
+    2021-10-10,2021-10-10
+    """
+    )
     assert pl.read_csv(data.encode(), parse_dates=True).null_count().row(0) == (0, 0)
 
 
@@ -437,3 +524,50 @@ def test_glob_csv(io_test_dir: str) -> None:
     path = os.path.join(io_test_dir, "small*.csv")
     assert pl.scan_csv(path).collect().shape == (3, 11)
     assert pl.read_csv(path).shape == (3, 11)
+
+
+def test_csv_whitepsace_delimiter_at_start_do_not_skip() -> None:
+    csv = "\t\t\t\t0\t1"
+    assert pl.read_csv(csv.encode(), sep="\t", has_header=False).to_dict(False) == {
+        "column_1": [None],
+        "column_2": [None],
+        "column_3": [None],
+        "column_4": [None],
+        "column_5": [0],
+        "column_6": [1],
+    }
+
+
+def test_csv_whitepsace_delimiter_at_end_do_not_skip() -> None:
+    csv = "0\t1\t\t\t\t"
+    assert pl.read_csv(csv.encode(), sep="\t", has_header=False).to_dict(False) == {
+        "column_1": [0],
+        "column_2": [1],
+        "column_3": [None],
+        "column_4": [None],
+        "column_5": [None],
+        "column_6": [None],
+    }
+
+
+def test_csv_multiple_null_values() -> None:
+    df = pl.DataFrame(
+        {
+            "a": [1, 2, None, 4],
+            "b": ["2022-01-01", "__NA__", "", "NA"],
+        }
+    )
+
+    f = io.BytesIO()
+    df.write_csv(f)
+    f.seek(0)
+
+    df2 = pl.read_csv(f, null_values=["__NA__", "NA"])
+    expected = pl.DataFrame(
+        {
+            "a": [1, 2, None, 4],
+            "b": ["2022-01-01", None, "", None],
+        }
+    )
+
+    assert df2.frame_equal(expected)

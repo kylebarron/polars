@@ -112,7 +112,7 @@ impl<'a> TakeRandomUtf8 for &'a Utf8Chunked {
     #[inline]
     fn get(self, index: usize) -> Option<Self::Item> {
         // Safety:
-        // Out of bounds is checkedn and downcast is of correct type
+        // Out of bounds is checked and downcast is of correct type
         unsafe { impl_take_random_get!(self, index, LargeStringArray) }
     }
 
@@ -160,20 +160,5 @@ impl TakeRandom for ListChunked {
             let s = Series::try_from((self.name(), arr));
             s.unwrap()
         })
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    #[should_panic]
-    fn test_oob() {
-        let data: Series = [1.0, 2.0, 3.0].iter().collect();
-        let data = data.f64().unwrap();
-        let matches = data.equal(5.0);
-        let matches_indexes = matches.arg_true();
-        matches_indexes.get(0);
     }
 }

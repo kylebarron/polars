@@ -1,44 +1,59 @@
+from __future__ import annotations
+
 from datetime import date, datetime, time
 
 import pandas as pd
-from test_series import verify_series_and_expr_api
 
 import polars as pl
-from polars import testing
+from polars.testing import assert_series_equal, verify_series_and_expr_api
 
 
 def test_list_arr_get() -> None:
     a = pl.Series("a", [[1, 2, 3], [4, 5], [6, 7, 8, 9]])
     out = a.arr.get(0)
     expected = pl.Series("a", [1, 4, 6])
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
     out = a.arr.first()
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
     out = pl.select(pl.lit(a).arr.first()).to_series()
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
 
     out = a.arr.get(-1)
     expected = pl.Series("a", [3, 5, 9])
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
     out = a.arr.last()
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
     out = pl.select(pl.lit(a).arr.last()).to_series()
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
 
     a = pl.Series("a", [[1, 2, 3], [4, 5], [6, 7, 8, 9]])
     out = a.arr.get(-3)
     expected = pl.Series("a", [1, None, 7])
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
+
+    assert pl.DataFrame(
+        {"a": [[1], [2], [3], [4, 5, 6], [7, 8, 9], [None, 11]]}
+    ).with_columns(
+        [pl.col("a").arr.get(i).alias(f"get_{i}") for i in range(4)]
+    ).to_dict(
+        False
+    ) == {
+        "a": [[1], [2], [3], [4, 5, 6], [7, 8, 9], [None, 11]],
+        "get_0": [1, 2, 3, 4, 7, None],
+        "get_1": [None, None, None, 5, 8, 11],
+        "get_2": [None, None, None, 6, 9, None],
+        "get_3": [None, None, None, None, None, None],
+    }
 
 
 def test_contains() -> None:
     a = pl.Series("a", [[1, 2, 3], [2, 5], [6, 7, 8, 9]])
     out = a.arr.contains(2)
     expected = pl.Series("a", [True, True, False])
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
 
     out = pl.select(pl.lit(a).arr.contains(2)).to_series()
-    testing.assert_series_equal(out, expected)
+    assert_series_equal(out, expected)
 
 
 def test_dtype() -> None:
@@ -56,11 +71,11 @@ def test_dtype() -> None:
             "dt": [[date(2022, 12, 31)]],
             "dtm": [[datetime(2022, 12, 31, 1, 2, 3)]],
         },
-        columns=[  # type: ignore
-            ["i", pl.List(pl.Int8)],
-            ["tm", pl.List(pl.Time)],
-            ["dt", pl.List(pl.Date)],
-            ["dtm", pl.List(pl.Datetime)],
+        columns=[
+            ("i", pl.List(pl.Int8)),
+            ("tm", pl.List(pl.Time)),
+            ("dt", pl.List(pl.Date)),
+            ("dtm", pl.List(pl.Datetime)),
         ],
     )
     assert df.schema == {
@@ -155,7 +170,7 @@ def test_list_append() -> None:
     out = df.select([pl.col("a").arr.concat([1, 4])])
     assert out["a"][0].to_list() == [1, 2, 1, 4]
 
-    out_s = df["a"].arr.concat(([4, 1]))
+    out_s = df["a"].arr.concat([4, 1])
     assert out_s[0].to_list() == [1, 2, 4, 1]
 
 
@@ -218,7 +233,7 @@ def test_cast_inner() -> None:
 
     # this creates an inner null type
     df = pl.from_pandas(pd.DataFrame(data=[[[]], [[]]], columns=["A"]))
-    assert df["A"].cast(pl.List(int)).dtype.inner == pl.Int64  # type: ignore
+    assert df["A"].cast(pl.List(int)).dtype.inner == pl.Int64  # type: ignore[arg-type, attr-defined]
 
 
 def test_list_eval_dtype_inference() -> None:

@@ -22,6 +22,7 @@ unsafe fn create_drop<T: Sized>(mut ptr: *const u8, n_t_vals: usize) -> Box<dyn 
     })
 }
 
+#[allow(clippy::type_complexity)]
 struct ExtensionSentinel {
     drop_fn: Option<Box<dyn FnMut()>>,
     // A function on the heap that take a `array: FixedSizeBinary` and a `name: &str`
@@ -69,6 +70,7 @@ pub(crate) fn create_extension<
     let n_padding = (buf.as_ptr() as usize) % t_alignment;
     buf.extend(std::iter::repeat(0).take(n_padding));
 
+    let mut null_count = 0 as IdxSize;
     // transmute T as bytes and copy in buffer
     for opt_t in iter.into_iter() {
         match opt_t {
@@ -81,6 +83,7 @@ pub(crate) fn create_extension<
                 mem::forget(t);
             }
             None => {
+                null_count += 1;
                 unsafe {
                     buf.extend_from_slice(any_as_u8_slice(&T::default()));
                     // Safety: we allocated upfront
@@ -117,7 +120,8 @@ pub(crate) fn create_extension<
         physical_type.into(),
         Some(metadata),
     );
-    let validity = if validity.null_count() > 0 {
+    // first freeze, otherwise we compute null
+    let validity = if null_count > 0 {
         Some(validity.into())
     } else {
         None

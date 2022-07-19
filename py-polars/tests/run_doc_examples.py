@@ -18,6 +18,8 @@ instance, in the past, the printout of dataframes has changed from rounded corne
 facilitate such a change, whilst not immediately having to add IGNORE_RESULT directives everywhere or changing all
 outputs, set `IGNORE_RESULT_ALL=True` below. Do note that this does mean no output is being checked anymore.
 """
+from __future__ import annotations
+
 import doctest
 import importlib
 import sys
@@ -39,7 +41,7 @@ def modules_in_path(p: Path) -> Generator:
 
 if __name__ == "__main__":
     # set to True to just run the code, and do not check any output. Will still report errors if the code is invalid
-    IGNORE_RESULT_ALL = True
+    IGNORE_RESULT_ALL = False
 
     # Below the implementation if the IGNORE_RESULT directive
     # You can ignore the result of a doctest by adding "doctest: +IGNORE_RESULT" into the code block
@@ -57,7 +59,7 @@ if __name__ == "__main__":
             else:
                 return OutputChecker.check_output(self, want, got, optionflags)
 
-    doctest.OutputChecker = CustomOutputChecker  # type: ignore
+    doctest.OutputChecker = CustomOutputChecker  # type: ignore[misc]
 
     # We want to be relaxed about whitespace, but strict on True vs 1
     doctest.NORMALIZE_WHITESPACE = True

@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import typing
 from datetime import datetime
-from typing import Dict, Sequence, Type, Union
+from typing import Sequence
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -10,7 +13,7 @@ import pytest
 import polars as pl
 
 
-def test_from_numpy() -> None:
+def test_df_from_numpy() -> None:
     df = pl.DataFrame(
         {
             "int8": np.array([1, 3, 2], dtype=np.int8),
@@ -52,13 +55,13 @@ def test_to_numpy() -> None:
     def test_series_to_numpy(
         name: str,
         values: list,
-        pl_dtype: Type[pl.DataType],
-        np_dtype: Union[
-            Type[np.signedinteger],
-            Type[np.unsignedinteger],
-            Type[np.floating],
-            Type[np.object_],
-        ],
+        pl_dtype: type[pl.DataType],
+        np_dtype: (
+            type[np.signedinteger]
+            | type[np.unsignedinteger]
+            | type[np.floating]
+            | type[np.object_]
+        ),
     ) -> None:
         pl_series_to_numpy_array = np.array(pl.Series(name, values, pl_dtype))
         numpy_array = np.array(values, dtype=np_dtype)
@@ -122,7 +125,7 @@ def test_from_pandas_nan_to_none() -> None:
     with pytest.raises(ArrowInvalid, match="Could not convert"):
         pl.from_pandas(df, nan_to_none=False)
 
-    df = pd.Series([2, np.nan, None], name="pd")  # type: ignore
+    df = pd.Series([2, np.nan, None], name="pd")  # type: ignore[assignment]
     out_true = pl.from_pandas(df)
     out_false = pl.from_pandas(df, nan_to_none=False)
     df.loc[2] = pd.NA
@@ -141,9 +144,7 @@ def test_from_pandas_datetime() -> None:
     assert s.dt.minute()[0] == 20
     assert s.dt.second()[0] == 20
 
-    date_times = pd.date_range(
-        "2021-06-24 00:00:00", "2021-06-24 10:00:00", freq="1H", closed="left"
-    )
+    date_times = pd.date_range("2021-06-24 00:00:00", "2021-06-24 09:00:00", freq="1H")
     s = pl.from_pandas(date_times)
     assert s[0] == datetime(2021, 6, 24, 0, 0)
     assert s[-1] == datetime(2021, 6, 24, 9, 0)
@@ -181,14 +182,15 @@ def test_arrow_list_chunked_array() -> None:
 
 
 def test_from_pandas_null() -> None:
+    # null column is an object dtype, so pl.Utf8 is most close
     df = pd.DataFrame([{"a": None}, {"a": None}])
     out = pl.DataFrame(df)
-    assert out.dtypes == [pl.Float64]
+    assert out.dtypes == [pl.Utf8]
     assert out["a"][0] is None
 
     df = pd.DataFrame([{"a": None, "b": 1}, {"a": None, "b": 2}])
     out = pl.DataFrame(df)
-    assert out.dtypes == [pl.Float64, pl.Int64]
+    assert out.dtypes == [pl.Utf8, pl.Int64]
 
 
 def test_from_pandas_nested_list() -> None:
@@ -214,7 +216,7 @@ def test_from_dict() -> None:
 
 
 def test_from_dict_struct() -> None:
-    data: Dict[str, Union[Dict, Sequence]] = {
+    data: dict[str, dict | Sequence] = {
         "a": {"b": [1, 3], "c": [2, 4]},
         "d": [5, 6],
     }
@@ -245,6 +247,12 @@ def test_from_records() -> None:
     assert df.shape == (3, 2)
 
 
+def test_from_numpy() -> None:
+    data = np.array([[1, 2, 3], [4, 5, 6]])
+    df = pl.from_numpy(data, columns=["a", "b"], orient="col")
+    assert df.shape == (3, 2)
+
+
 def test_from_arrow() -> None:
     data = pa.table({"a": [1, 2, 3], "b": [4, 5, 6]})
     df = pl.from_arrow(data)
@@ -262,13 +270,27 @@ def test_from_pandas_dataframe() -> None:
 
     # if not a pandas dataframe, raise a ValueError
     with pytest.raises(ValueError):
-        _ = pl.from_pandas([1, 2])  # type: ignore
+        _ = pl.from_pandas([1, 2])  # type: ignore[call-overload]
 
 
 def test_from_pandas_series() -> None:
     pd_series = pd.Series([1, 2, 3], name="pd")
     df = pl.from_pandas(pd_series)
     assert df.shape == (3,)
+
+
+def test_from_optional_not_available() -> None:
+    with patch("polars.convert._NUMPY_AVAILABLE", False):
+        with pytest.raises(ImportError):
+            pl.from_numpy(np.array([[1, 2], [3, 4]]), columns=["a", "b"])
+    with patch("polars.convert._PYARROW_AVAILABLE", False):
+        with pytest.raises(ImportError):
+            pl.from_arrow(pa.table({"a": [1, 2, 3], "b": [4, 5, 6]}))
+        with pytest.raises(ImportError):
+            pl.from_pandas(pd.Series([1, 2, 3]))
+    with patch("polars.convert._PANDAS_AVAILABLE", False):
+        with pytest.raises(ImportError):
+            pl.from_pandas(pd.Series([1, 2, 3]))
 
 
 def test_upcast_pyarrow_dicts() -> None:
@@ -335,19 +357,19 @@ def test_from_empty_pandas_strings() -> None:
 
 def test_from_empty_arrow() -> None:
     df = pl.from_arrow(pa.table(pd.DataFrame({"a": [], "b": []})))
-    assert df.columns == ["a", "b"]  # type: ignore
-    assert df.dtypes == [pl.Float64, pl.Float64]  # type: ignore
+    assert df.columns == ["a", "b"]  # type: ignore[union-attr]
+    assert df.dtypes == [pl.Float64, pl.Float64]  # type: ignore[union-attr]
 
     # 2705
     df1 = pd.DataFrame(columns=["b"], dtype=float)
     tbl = pa.Table.from_pandas(df1)
     out = pl.from_arrow(tbl)
-    assert out.columns == ["b", "__index_level_0__"]  # type: ignore
-    assert out.dtypes == [pl.Float64, pl.Utf8]  # type: ignore
+    assert out.columns == ["b", "__index_level_0__"]  # type: ignore[union-attr]
+    assert out.dtypes == [pl.Float64, pl.Utf8]  # type: ignore[union-attr]
     tbl = pa.Table.from_pandas(df1, preserve_index=False)
     out = pl.from_arrow(tbl)
-    assert out.columns == ["b"]  # type: ignore
-    assert out.dtypes == [pl.Float64]  # type: ignore
+    assert out.columns == ["b"]  # type: ignore[union-attr]
+    assert out.dtypes == [pl.Float64]  # type: ignore[union-attr]
 
 
 def test_from_null_column() -> None:
@@ -395,3 +417,9 @@ def test_cat_int_types_3500() -> None:
         for t in [int_dict_type, uint_dict_type]:
             s = pl.from_arrow(pyarrow_array.cast(t))
             assert s.series_equal(pl.Series(["a", "a", "b"]).cast(pl.Categorical))
+
+
+def test_from_pyarrow_chunked_array() -> None:
+    column = pa.chunked_array([[1], [2]])
+    series = pl.Series("column", column)
+    assert series.to_list() == [1, 2]

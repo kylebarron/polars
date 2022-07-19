@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import numpy as np
 import pytest
 from _pytest.capture import CaptureFixture
 
 import polars as pl
 from polars import col, lit, map_binary, when
+from polars.testing import assert_frame_equal
 
 
 def test_lazy() -> None:
@@ -21,6 +24,12 @@ def test_lazy() -> None:
 
     # test if pl.list is available, this is `to_list` re-exported as list
     df.groupby("a").agg(pl.list("b"))
+
+
+def test_lazyframe_membership_operator() -> None:
+    ldf = pl.DataFrame({"name": ["Jane", "John"], "age": [20, 30]}).lazy()
+    assert "name" in ldf
+    assert "phone" not in ldf
 
 
 def test_apply() -> None:
@@ -48,6 +57,37 @@ def test_set_null() -> None:
     assert s[0] == 100
     assert s[1] is None
     assert s[2] is None
+
+
+def test_take_every() -> None:
+    df = pl.DataFrame({"a": [1, 2, 3, 4], "b": ["w", "x", "y", "z"]}).lazy()
+    expected_df = pl.DataFrame({"a": [1, 3], "b": ["w", "y"]})
+    assert_frame_equal(expected_df, df.take_every(2).collect())
+
+
+def test_slice() -> None:
+    ldf = pl.DataFrame({"a": [1, 2, 3, 4], "b": ["a", "b", "c", "d"]}).lazy()
+    expected = pl.DataFrame({"a": [3, 4], "b": ["c", "d"]}).lazy()
+    for slice_params in (
+        [2, 10],  # slice > len(df)
+        [2, 4],  # slice == len(df)
+        [2],  # optional len
+    ):
+        assert_frame_equal(ldf.slice(*slice_params), expected)
+
+    for py_slice in (
+        slice(1, 2),
+        slice(0, 3, 2),
+        slice(-3, None),
+        slice(None, 2, 2),
+        slice(3, None, -1),
+        slice(1, None, -2),
+    ):
+        # confirm frame slice matches python slice
+        assert ldf[py_slice].collect().rows() == ldf.collect().rows()[py_slice]
+
+    assert_frame_equal(ldf[::-1], ldf.reverse())
+    assert_frame_equal(ldf[::-2], ldf.reverse().take_every(2))
 
 
 def test_agg() -> None:
@@ -603,7 +643,7 @@ def test_take(fruits_cars: pl.DataFrame) -> None:
 
     for index in [[0, 1], pl.Series([0, 1]), np.array([0, 1])]:
         out = df.sort("fruits").select(
-            [col("B").reverse().take(index).list().over("fruits"), "fruits"]  # type: ignore
+            [col("B").reverse().take(index).list().over("fruits"), "fruits"]  # type: ignore[arg-type]
         )
 
         assert out[0, "B"] == [2, 3]
@@ -832,7 +872,7 @@ def test_arithmetic() -> None:
 
 def test_ufunc() -> None:
     df = pl.DataFrame({"a": [1, 2]})
-    out = df.select(np.log(col("a")))  # type: ignore
+    out = df.select(np.log(col("a")))  # type: ignore[call-overload]
     assert out["a"][1] == 0.6931471805599453
 
 
@@ -1068,25 +1108,25 @@ def test_quantile(fruits_cars: pl.DataFrame) -> None:
 
 
 def test_is_between(fruits_cars: pl.DataFrame) -> None:
-    assert fruits_cars.select(pl.col("A").is_between(2, 4))["is_between"].series_equal(  # type: ignore
+    assert fruits_cars.select(pl.col("A").is_between(2, 4))["is_between"].series_equal(  # type: ignore[arg-type]
         pl.Series("is_between", [False, False, True, False, False])
     )
-    assert fruits_cars.select(pl.col("A").is_between(2, 4, False))["is_between"].series_equal(  # type: ignore
+    assert fruits_cars.select(pl.col("A").is_between(2, 4, False))["is_between"].series_equal(  # type: ignore[arg-type]
         pl.Series("is_between", [False, False, True, False, False])
     )
-    assert fruits_cars.select(pl.col("A").is_between(2, 4, [False, False]))["is_between"].series_equal(  # type: ignore
+    assert fruits_cars.select(pl.col("A").is_between(2, 4, [False, False]))["is_between"].series_equal(  # type: ignore[arg-type]
         pl.Series("is_between", [False, False, True, False, False])
     )
-    assert fruits_cars.select(pl.col("A").is_between(2, 4, True))["is_between"].series_equal(  # type: ignore
+    assert fruits_cars.select(pl.col("A").is_between(2, 4, True))["is_between"].series_equal(  # type: ignore[arg-type]
         pl.Series("is_between", [False, True, True, True, False])
     )
-    assert fruits_cars.select(pl.col("A").is_between(2, 4, [True, True]))["is_between"].series_equal(  # type: ignore
+    assert fruits_cars.select(pl.col("A").is_between(2, 4, [True, True]))["is_between"].series_equal(  # type: ignore[arg-type]
         pl.Series("is_between", [False, True, True, True, False])
     )
-    assert fruits_cars.select(pl.col("A").is_between(2, 4, [False, True]))["is_between"].series_equal(  # type: ignore
+    assert fruits_cars.select(pl.col("A").is_between(2, 4, [False, True]))["is_between"].series_equal(  # type: ignore[arg-type]
         pl.Series("is_between", [False, False, True, True, False])
     )
-    assert fruits_cars.select(pl.col("A").is_between(2, 4, [True, False]))["is_between"].series_equal(  # type: ignore
+    assert fruits_cars.select(pl.col("A").is_between(2, 4, [True, False]))["is_between"].series_equal(  # type: ignore[arg-type]
         pl.Series("is_between", [False, True, True, False, False])
     )
 
@@ -1162,7 +1202,7 @@ def test_self_join() -> None:
     ).lazy()
 
     out = (
-        df.join(ldf=df, left_on="manager_id", right_on="employee_id", how="left")
+        df.join(other=df, left_on="manager_id", right_on="employee_id", how="left")
         .select(
             exprs=[
                 pl.col("employee_id"),
@@ -1258,6 +1298,9 @@ def test_lazy_schema() -> None:
     ).lazy()
     assert lf.dtypes == [pl.Int64, pl.Float64, pl.Utf8]
 
+    lfe = lf.cleared()
+    assert lfe.schema == lf.schema
+
 
 def test_deadlocks_3409() -> None:
     assert (
@@ -1279,3 +1322,33 @@ def test_deadlocks_3409() -> None:
         .with_columns([pl.col("col1").cumulative_eval(pl.element().map(lambda x: 0))])
         .to_dict(False)
     ) == {"col1": [0, 0, 0]}
+
+
+def test_predicate_count_vstack() -> None:
+    l1 = pl.DataFrame(
+        {
+            "k": ["x", "y"],
+            "v": [3, 2],
+        }
+    ).lazy()
+    l2 = pl.DataFrame(
+        {
+            "k": ["x", "y"],
+            "v": [5, 7],
+        }
+    ).lazy()
+    assert pl.concat([l1, l2]).filter(pl.count().over("k") == 2).collect()[
+        "v"
+    ].to_list() == [3, 2, 5, 7]
+
+
+def test_explode_inner_lists_3985() -> None:
+    df = pl.DataFrame(
+        data={"id": [1, 1, 1], "categories": [["a"], ["b"], ["a", "c"]]}
+    ).lazy()
+
+    assert (
+        df.groupby("id")
+        .agg(pl.col("categories"))
+        .with_column(pl.col("categories").arr.eval(pl.element().explode()))
+    ).collect().to_dict(False) == {"id": [1], "categories": [["a", "b", "a", "c"]]}

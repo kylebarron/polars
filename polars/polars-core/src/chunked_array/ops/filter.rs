@@ -45,7 +45,7 @@ where
             .zip(filter.downcast_iter())
             .map(|(left, mask)| filter_fn(left, mask).unwrap())
             .collect::<Vec<_>>();
-        Ok(self.copy_with_chunks(chunks))
+        Ok(self.copy_with_chunks(chunks, true))
     }
 }
 
@@ -66,7 +66,7 @@ impl ChunkFilter<BooleanType> for BooleanChunked {
             .zip(filter.downcast_iter())
             .map(|(left, mask)| filter_fn(left, mask).unwrap())
             .collect::<Vec<_>>();
-        Ok(self.copy_with_chunks(chunks))
+        Ok(self.copy_with_chunks(chunks, true))
     }
 }
 
@@ -76,7 +76,7 @@ impl ChunkFilter<Utf8Type> for Utf8Chunked {
         if filter.len() == 1 {
             return match filter.get(0) {
                 Some(true) => Ok(self.clone()),
-                _ => Ok(self.slice(0, 0)),
+                _ => Ok(Utf8Chunked::full_null(self.name(), 0)),
             };
         }
         check_filter_len!(self, filter);
@@ -88,7 +88,7 @@ impl ChunkFilter<Utf8Type> for Utf8Chunked {
             .map(|(left, mask)| filter_fn(left, mask).unwrap())
             .collect::<Vec<_>>();
 
-        Ok(self.copy_with_chunks(chunks))
+        Ok(self.copy_with_chunks(chunks, true))
     }
 }
 
@@ -98,7 +98,10 @@ impl ChunkFilter<ListType> for ListChunked {
         if filter.len() == 1 {
             return match filter.get(0) {
                 Some(true) => Ok(self.clone()),
-                _ => Ok(self.slice(0, 0)),
+                _ => Ok(ListChunked::from_chunks(
+                    self.name(),
+                    vec![new_empty_array(self.dtype().to_arrow())],
+                )),
             };
         }
         let (left, filter) = align_chunks_binary(self, filter);

@@ -8,7 +8,6 @@ use std::sync::Arc;
 pub mod ops;
 #[macro_use]
 pub mod arithmetic;
-pub mod boolean;
 pub mod builder;
 pub mod cast;
 pub mod comparison;
@@ -46,6 +45,7 @@ use polars_arrow::prelude::*;
 use crate::chunked_array::categorical::RevMapping;
 use crate::series::IsSorted;
 use crate::utils::CustomIterTools;
+use bitflags::bitflags;
 use std::mem;
 
 #[cfg(not(feature = "dtype-categorical"))]
@@ -146,43 +146,56 @@ pub struct ChunkedArray<T> {
     phantom: PhantomData<T>,
     /// maps categorical u32 indexes to String values
     pub(crate) categorical_map: Option<Arc<RevMapping>>,
-    /// first bit: sorted
-    /// second_bit: sorted reverse
-    /// third bit dtype list: fast_explode
-    ///     - unset: unknown or not all arrays have at least one value
-    ///     - set: all list arrays are filled (this allows for cheap explode)
-    pub(crate) bit_settings: u8,
+    pub(crate) bit_settings: Settings,
 }
+
+bitflags! {
+    #[derive(Default)]
+    pub(crate) struct Settings: u8 {
+    const SORTED_ASC = 0x01;
+    const SORTED_DSC = 0x02;
+    const FAST_EXPLODE_LIST = 0x03;
+}}
 
 impl<T> ChunkedArray<T> {
     pub(crate) fn is_sorted(&self) -> bool {
-        self.bit_settings & 1 != 0
+        self.bit_settings.contains(Settings::SORTED_ASC)
     }
 
     pub(crate) fn is_sorted_reverse(&self) -> bool {
-        self.bit_settings & 1 << 1 != 0
+        self.bit_settings.contains(Settings::SORTED_DSC)
     }
 
     /// Set the 'sorted' bit meta info.
     pub fn set_sorted(&mut self, reverse: bool) {
         if reverse {
             // unset sorted
-            self.bit_settings &= !1;
+            self.bit_settings.remove(Settings::SORTED_ASC);
             // set reverse sorted
-            self.bit_settings |= 1 << 1
+            self.bit_settings.insert(Settings::SORTED_DSC)
         } else {
             // // unset reverse sorted
-            self.bit_settings &= !(1 << 1);
+            self.bit_settings.remove(Settings::SORTED_DSC);
             // set sorted
-            self.bit_settings |= 1
+            self.bit_settings.insert(Settings::SORTED_ASC)
+        }
+    }
+
+    pub fn is_sorted2(&self) -> IsSorted {
+        if self.is_sorted() {
+            IsSorted::Ascending
+        } else if self.is_sorted_reverse() {
+            IsSorted::Descending
+        } else {
+            IsSorted::Not
         }
     }
 
     pub fn set_sorted2(&mut self, sorted: IsSorted) {
         match sorted {
             IsSorted::Not => {
-                self.bit_settings &= !(1 << 1);
-                self.bit_settings &= !1;
+                self.bit_settings
+                    .remove(Settings::SORTED_ASC | Settings::SORTED_DSC);
             }
             IsSorted::Ascending => self.set_sorted(false),
             IsSorted::Descending => self.set_sorted(true),
@@ -326,14 +339,18 @@ impl<T> ChunkedArray<T> {
     }
 
     /// Create a new ChunkedArray from self, where the chunks are replaced.
-    fn copy_with_chunks(&self, chunks: Vec<ArrayRef>) -> Self {
-        ChunkedArray {
+    fn copy_with_chunks(&self, chunks: Vec<ArrayRef>, keep_sorted: bool) -> Self {
+        let mut out = ChunkedArray {
             field: self.field.clone(),
             chunks,
             phantom: PhantomData,
             categorical_map: self.categorical_map.clone(),
             bit_settings: self.bit_settings,
+        };
+        if !keep_sorted {
+            out.set_sorted2(IsSorted::Not);
         }
+        out
     }
 
     /// Get a mask of the null values.
@@ -457,7 +474,7 @@ where
             chunks,
             phantom: PhantomData,
             categorical_map: None,
-            bit_settings: 0,
+            bit_settings: Default::default(),
         }
     }
 }
@@ -473,7 +490,7 @@ impl Int32Chunked {
             chunks,
             phantom: PhantomData,
             categorical_map: None,
-            bit_settings: 0,
+            bit_settings: Default::default(),
         }
     }
 }

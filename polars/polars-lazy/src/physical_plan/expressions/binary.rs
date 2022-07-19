@@ -1,4 +1,4 @@
-use crate::physical_plan::state::ExecutionState;
+use crate::physical_plan::state::{ExecutionState, StateFlags};
 use crate::prelude::*;
 use polars_core::frame::groupby::GroupsProxy;
 use polars_core::series::unstable::UnstableSeries;
@@ -92,10 +92,13 @@ impl PhysicalExpr for BinaryExpr {
     }
 
     fn evaluate(&self, df: &DataFrame, state: &ExecutionState) -> Result<Series> {
+        let mut state = state.split();
+        // don't cache window functions as they run in parallel
+        state.flags.remove(StateFlags::CACHE_WINDOW_EXPR);
         let (lhs, rhs) = POOL.install(|| {
             rayon::join(
-                || self.left.evaluate(df, state),
-                || self.right.evaluate(df, state),
+                || self.left.evaluate(df, &state),
+                || self.right.evaluate(df, &state),
             )
         });
         apply_operator_owned(lhs?, rhs?, self.op)
@@ -313,7 +316,7 @@ impl PhysicalExpr for BinaryExpr {
             // flatten the Series and apply the operators
             (AggState::AggregatedList(_), AggState::AggregatedList(_), _) => {
                 let lhs = ac_l.flat_naive().as_ref().clone();
-                let rhs = ac_l.flat_naive().as_ref().clone();
+                let rhs = ac_r.flat_naive().as_ref().clone();
 
                 // drop lhs so that we might operate in place
                 {
@@ -329,9 +332,18 @@ impl PhysicalExpr for BinaryExpr {
             // Both are or a flat series
             // so we can flatten the Series and apply the operators
             _ => {
+                // Check if the group state of `ac_a` differs from the original `GroupTuples`.
+                // If this is the case we might need to align the groups. But only if `ac_b` is not a
+                // `Literal` as literals don't have any groups, the changed group order does not matter
+                // in that case
+                let different_group_state =
+                    |ac_a: &AggregationContext, ac_b: &AggregationContext| {
+                        (ac_a.update_groups != UpdateGroups::No)
+                            && !matches!(ac_b.agg_state(), AggState::Literal(_))
+                    };
+
                 // the groups state differs, so we aggregate both and flatten again to make them align
-                if ac_l.update_groups != UpdateGroups::No || ac_r.update_groups != UpdateGroups::No
-                {
+                if different_group_state(&ac_l, &ac_r) || different_group_state(&ac_r, &ac_l) {
                     // use the aggregated state to determine the new groups
                     let lhs = ac_l.aggregated();
                     ac_l.with_update_groups(UpdateGroups::WithSeriesLenOwned(lhs.clone()));
@@ -526,9 +538,9 @@ mod stats {
                 _ => Ok(true),
             };
             out.map(|read| {
-                if state.verbose && read {
+                if state.verbose() && read {
                     eprintln!("parquet file must be read, statistics not sufficient to for predicate.")
-                } else if state.verbose && !read {
+                } else if state.verbose() && !read {
                     eprintln!("parquet file can be skipped, the statistics were sufficient to apply the predicate.")
                 };
                 read

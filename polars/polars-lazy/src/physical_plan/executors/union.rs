@@ -11,7 +11,7 @@ pub(crate) struct UnionExec {
 }
 
 impl Executor for UnionExec {
-    fn execute(&mut self, state: &ExecutionState) -> Result<DataFrame> {
+    fn execute(&mut self, state: &mut ExecutionState) -> Result<DataFrame> {
         let mut inputs = std::mem::take(&mut self.inputs);
 
         if self.options.slice && self.options.slice_offset >= 0 {
@@ -19,8 +19,11 @@ impl Executor for UnionExec {
             let mut len = self.options.slice_len as usize;
             let dfs = inputs
                 .into_iter()
-                .map(|mut input| {
-                    let df = input.execute(state)?;
+                .enumerate()
+                .map(|(idx, mut input)| {
+                    let mut state = state.split();
+                    state.branch_idx += idx;
+                    let df = input.execute(&mut state)?;
 
                     Ok(if offset > df.height() {
                         offset -= df.height();
@@ -54,9 +57,12 @@ impl Executor for UnionExec {
                     .map(|chunk| {
                         chunk
                             .into_par_iter()
-                            .map(|input| {
+                            .enumerate()
+                            .map(|(idx, input)| {
                                 let mut input = std::mem::take(input);
-                                input.execute(state)
+                                let mut state = state.split();
+                                state.branch_idx += idx;
+                                input.execute(&mut state)
                             })
                             .collect::<Result<Vec<_>>>()
                     })

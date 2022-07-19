@@ -1,9 +1,8 @@
-# flake8: noqa
 import warnings
 
 try:
     from polars.polars import version
-except ImportError as e:  # pragma: no cover
+except ImportError:
 
     def version() -> str:
         return ""
@@ -12,11 +11,15 @@ except ImportError as e:  # pragma: no cover
     warnings.warn("polars binary missing!")
 
 import polars.testing as testing
-from polars.cfg import (  # flake8: noqa. We do not export in __all__
-    Config,
-    toggle_string_cache,
+from polars.cfg import Config, toggle_string_cache  # We do not export in __all__
+from polars.convert import (
+    from_arrow,
+    from_dict,
+    from_dicts,
+    from_numpy,
+    from_pandas,
+    from_records,
 )
-from polars.convert import from_arrow, from_dict, from_dicts, from_pandas, from_records
 from polars.datatypes import (
     Boolean,
     Categorical,
@@ -54,11 +57,8 @@ from polars.exceptions import (
     ShapeError,
 )
 from polars.internals.expr import Expr
-from polars.internals.frame import (  # flake8: noqa # TODO: remove need for wrap_df
-    DataFrame,
-    wrap_df,
-)
-from polars.internals.functions import arg_where, concat, date_range, get_dummies
+from polars.internals.frame import DataFrame, wrap_df  # TODO: remove need for wrap_df
+from polars.internals.functions import concat, date_range, get_dummies
 from polars.internals.io import read_ipc_schema, read_parquet_schema
 from polars.internals.lazy_frame import LazyFrame
 from polars.internals.lazy_functions import _date as date
@@ -68,6 +68,7 @@ from polars.internals.lazy_functions import (
     any,
     apply,
     arange,
+    arg_where,
     argsort_by,
     avg,
     col,
@@ -105,10 +106,7 @@ from polars.internals.lazy_functions import (
 )
 from polars.internals.lazy_functions import to_list as list
 from polars.internals.lazy_functions import var
-from polars.internals.series import (  # flake8: noqa # TODO: remove need for wrap_s
-    Series,
-    wrap_s,
-)
+from polars.internals.series import Series, wrap_s  # TODO: remove need for wrap_s
 from polars.internals.whenthen import when
 from polars.io import (
     read_avro,
@@ -230,6 +228,7 @@ __all__ = [
     "from_dict",
     "from_dicts",
     "from_records",
+    "from_numpy",
     "from_arrow",
     "from_pandas",
     # testing

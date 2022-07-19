@@ -6,8 +6,30 @@ use crate::prelude::*;
 use crate::RowCount;
 use arrow::io::parquet::read;
 use polars_core::prelude::*;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Seek};
 use std::sync::Arc;
+
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum ParallelStrategy {
+    /// Don't parallelize
+    None,
+    /// Parallelize over the row groups
+    Columns,
+    /// Parallelize over the columns
+    RowGroups,
+    /// Automatically determine over which unit to parallelize
+    /// This will choose the most occurring unit.
+    Auto,
+}
+
+impl Default for ParallelStrategy {
+    fn default() -> Self {
+        ParallelStrategy::Auto
+    }
+}
 
 /// Read Apache parquet format into a DataFrame.
 #[must_use]
@@ -17,14 +39,15 @@ pub struct ParquetReader<R: Read + Seek> {
     n_rows: Option<usize>,
     columns: Option<Vec<String>>,
     projection: Option<Vec<usize>>,
-    parallel: bool,
+    parallel: ParallelStrategy,
     row_count: Option<RowCount>,
+    low_memory: bool,
 }
 
 impl<R: MmapBytesReader> ParquetReader<R> {
     #[cfg(feature = "lazy")]
     // todo! hoist to lazy crate
-    pub fn finish_with_scan_ops(
+    pub fn _finish_with_scan_ops(
         mut self,
         predicate: Option<Arc<dyn PhysicalIoExpr>>,
         aggregate: Option<&[ScanAggregation]>,
@@ -45,6 +68,7 @@ impl<R: MmapBytesReader> ParquetReader<R> {
             aggregate,
             self.parallel,
             self.row_count,
+            self.low_memory,
         )
         .map(|mut df| {
             if rechunk {
@@ -54,8 +78,15 @@ impl<R: MmapBytesReader> ParquetReader<R> {
         })
     }
 
+    /// Try to reduce memory pressure at the expense of performance. If setting this does not reduce memory
+    /// enough, turn off parallelization.
+    pub fn set_low_memory(mut self, low_memory: bool) -> Self {
+        self.low_memory = low_memory;
+        self
+    }
+
     /// Read the parquet file in parallel (default). The single threaded reader consumes less memory.
-    pub fn read_parallel(mut self, parallel: bool) -> Self {
+    pub fn read_parallel(mut self, parallel: ParallelStrategy) -> Self {
         self.parallel = parallel;
         self
     }
@@ -95,6 +126,7 @@ impl<R: MmapBytesReader> ParquetReader<R> {
 }
 
 impl<R: MmapBytesReader> SerReader<R> for ParquetReader<R> {
+    /// Create a new [`ParquetReader`] from an existing `Reader`.
     fn new(reader: R) -> Self {
         ParquetReader {
             reader,
@@ -102,8 +134,9 @@ impl<R: MmapBytesReader> SerReader<R> for ParquetReader<R> {
             n_rows: None,
             columns: None,
             projection: None,
-            parallel: true,
+            parallel: Default::default(),
             row_count: None,
+            low_memory: false,
         }
     }
 
@@ -130,6 +163,7 @@ impl<R: MmapBytesReader> SerReader<R> for ParquetReader<R> {
             None,
             self.parallel,
             self.row_count,
+            self.low_memory,
         )
         .map(|mut df| {
             if self.rechunk {

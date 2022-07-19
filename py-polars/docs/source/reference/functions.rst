@@ -16,22 +16,23 @@ Conversion
 .. autosummary::
    :toctree: api/
 
+    from_arrow
     from_dict
     from_dicts
-    from_records
-    from_arrow
+    from_numpy
     from_pandas
+    from_records
 
-Eager functions
-~~~~~~~~~~~~~~~
+Eager/Lazy functions
+~~~~~~~~~~~~~~~~~~~~
 .. autosummary::
    :toctree: api/
 
-   get_dummies
-   concat
-   repeat
    arg_where
+   concat
    date_range
+   get_dummies
+   repeat
 
 Parallelization
 ~~~~~~~~~~~~~~~

@@ -11,12 +11,11 @@ pub mod avro;
 #[cfg(feature = "csv-file")]
 #[cfg_attr(docsrs, doc(cfg(feature = "csv-file")))]
 pub mod csv;
-#[cfg(feature = "csv-file")]
-#[cfg_attr(docsrs, doc(cfg(feature = "csv-file")))]
-pub mod csv_core;
+#[cfg(feature = "parquet")]
+#[cfg_attr(docsrs, doc(cfg(feature = "parquet")))]
 pub mod export;
-#[cfg(feature = "ipc")]
-#[cfg_attr(docsrs, doc(cfg(feature = "ipc")))]
+#[cfg(any(feature = "ipc", feature = "ipc_streaming"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "ipc", feature = "ipc_streaming"))))]
 pub mod ipc;
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
@@ -45,9 +44,19 @@ pub mod partition;
 
 pub use options::*;
 
-#[cfg(any(feature = "ipc", feature = "json", feature = "avro"))]
+#[cfg(any(
+    feature = "ipc",
+    feature = "json",
+    feature = "avro",
+    feature = "ipc_streaming"
+))]
 use crate::aggregations::{apply_aggregations, ScanAggregation};
-#[cfg(any(feature = "ipc", feature = "json", feature = "avro"))]
+#[cfg(any(
+    feature = "ipc",
+    feature = "json",
+    feature = "avro",
+    feature = "ipc_streaming"
+))]
 use crate::predicates::PhysicalIoExpr;
 #[allow(unused)] // remove when updating to rust nightly >= 1.61
 use arrow::array::new_empty_array;
@@ -95,7 +104,12 @@ pub trait ArrowReader {
     fn next_record_batch(&mut self) -> ArrowResult<Option<ArrowChunk>>;
 }
 
-#[cfg(any(feature = "ipc", feature = "json", feature = "avro"))]
+#[cfg(any(
+    feature = "ipc",
+    feature = "json",
+    feature = "avro",
+    feature = "ipc_streaming"
+))]
 pub(crate) fn finish_reader<R: ArrowReader>(
     mut reader: R,
     rechunk: bool,

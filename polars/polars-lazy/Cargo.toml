@@ -32,6 +32,8 @@ dtype-duration = ["polars-core/dtype-duration", "polars-time/dtype-duration"]
 dtype-categorical = ["polars-core/dtype-categorical"]
 dtype-struct = ["polars-core/dtype-struct"]
 object = ["polars-core/object"]
+date_offset = []
+trigonometry = []
 
 true_div = []
 
@@ -68,6 +70,7 @@ list_to_struct = ["polars-ops/list_to_struct"]
 python = ["pyo3"]
 row_hash = ["polars-core/row_hash"]
 string_justify = ["polars-ops/string_justify"]
+arg_where = []
 
 # no guarantees whatsoever
 private = ["polars-time/private"]
@@ -116,6 +119,7 @@ test_all = [
 
 [dependencies]
 ahash = "0.7"
+bitflags = "1.3"
 glob = "0.3"
 parking_lot = "0.12"
 pyo3 = { version = "0.16", optional = true }

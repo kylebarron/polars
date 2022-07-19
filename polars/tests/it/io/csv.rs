@@ -530,7 +530,7 @@ null-value,b,bar,
     let file = Cursor::new(csv);
     let df = CsvReader::new(file)
         .has_header(false)
-        .with_null_values(NullValues::AllColumns("null-value".to_string()).into())
+        .with_null_values(NullValues::AllColumnsSingle("null-value".to_string()).into())
         .finish()?;
     assert!(df.get_columns()[0].null_count() > 0);
     Ok(())
@@ -640,7 +640,7 @@ fn test_header_with_comments() -> Result<()> {
 #[test]
 #[cfg(feature = "temporal")]
 fn test_ignore_parse_dates() -> Result<()> {
-    // if parse dates is set, a given schema should still prevale above date parsing.
+    // if parse dates is set, a given schema should still prevail above date parsing.
     let csv = r#"a,b,c
 1,i,16200126
 2,j,16250130
@@ -773,7 +773,7 @@ fn test_null_values_infer_schema() -> Result<()> {
 5,6"#;
     let file = Cursor::new(csv);
     let df = CsvReader::new(file)
-        .with_null_values(Some(NullValues::AllColumns("NA".into())))
+        .with_null_values(Some(NullValues::AllColumnsSingle("NA".into())))
         .finish()?;
     let expected = &[DataType::Int64, DataType::Int64];
     assert_eq!(df.dtypes(), expected);

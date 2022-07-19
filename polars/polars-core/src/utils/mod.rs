@@ -198,7 +198,7 @@ pub fn slice_slice<T>(vals: &[T], offset: i64, len: usize) -> &[T] {
 #[cfg(feature = "private")]
 #[doc(hidden)]
 pub fn slice_offsets(offset: i64, length: usize, array_len: usize) -> (usize, usize) {
-    let abs_offset = offset.abs() as usize;
+    let abs_offset = offset.unsigned_abs() as usize;
 
     // The offset counted from the start of the array
     // negative index
@@ -785,7 +785,7 @@ fn _get_supertype(l: &DataType, r: &DataType) -> Option<DataType> {
 
 /// This takes ownership of the DataFrame so that drop is called earlier.
 /// Does not check if schema is correct
-pub fn accumulate_dataframes_vertical_unchecked<I>(dfs: I) -> Result<DataFrame>
+pub fn accumulate_dataframes_vertical_unchecked<I>(dfs: I) -> DataFrame
 where
     I: IntoIterator<Item = DataFrame>,
 {
@@ -794,7 +794,7 @@ where
     for df in iter {
         acc_df.vstack_mut_unchecked(&df);
     }
-    Ok(acc_df)
+    acc_df
 }
 
 /// This takes ownership of the DataFrame so that drop is called earlier.
@@ -821,6 +821,19 @@ where
         acc_df.vstack_mut(df)?;
     }
     Ok(acc_df)
+}
+
+/// Concat the DataFrames to a single DataFrame.
+pub fn concat_df_unchecked<'a, I>(dfs: I) -> DataFrame
+where
+    I: IntoIterator<Item = &'a DataFrame>,
+{
+    let mut iter = dfs.into_iter();
+    let mut acc_df = iter.next().unwrap().clone();
+    for df in iter {
+        acc_df.vstack_mut_unchecked(df);
+    }
+    acc_df
 }
 
 pub fn accumulate_dataframes_horizontal(dfs: Vec<DataFrame>) -> Result<DataFrame> {

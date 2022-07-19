@@ -1,7 +1,8 @@
+from __future__ import annotations
+
 import typing
 from datetime import date, datetime, timedelta
 from functools import reduce
-from typing import List, Optional
 
 import numpy as np
 
@@ -32,7 +33,7 @@ def test_apply_none() -> None:
     assert out_df["a"].to_list() == (df["a"] * df["b"]).to_list()
 
     # check if we can return None
-    def func(s: List) -> Optional[int]:
+    def func(s: list) -> int | None:
         if s[0][0] == 190:
             return None
         else:
@@ -180,3 +181,19 @@ def test_apply_list_anyvalue_fallback() -> None:
     assert df.select(pl.col("text").apply(json.loads)).to_dict(False) == {
         "text": [[], [{"x": 1, "y": 2}, {"x": 3, "y": 4}], [{"x": 1, "y": 2}]]
     }
+
+
+def test_apply_all_types() -> None:
+    dtypes = [
+        pl.UInt8,
+        pl.UInt16,
+        pl.UInt32,
+        pl.UInt64,
+        pl.Int8,
+        pl.Int16,
+        pl.Int32,
+        pl.Int64,
+    ]
+    # test we don't panic
+    for dtype in dtypes:
+        pl.Series([1, 2, 3, 4, 5], dtype=dtype).apply(lambda x: x)

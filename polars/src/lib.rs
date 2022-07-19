@@ -200,7 +200,7 @@
 //!     - `horizontal_concat` - Concat horizontally and extend with null values if lengths don't match
 //!     - `dataframe_arithmetic` - Arithmetic on (Dataframe and DataFrames) and (DataFrame on Series)
 //!     - `partition_by` - Split into multiple DataFrames partitioned by groups.
-//! * `Series` operations:
+//! * `Series`/`Expression` operations:
 //!     - `is_in` - [Check for membership in `Series`](crate::chunked_array::ops::IsIn)
 //!     - `zip_with` - [Zip two Series/ ChunkedArrays](crate::chunked_array::ops::ChunkZip)
 //!     - `round_series` - round underlying float types of `Series`.
@@ -231,6 +231,9 @@
 //!     - `list_to_struct` - Convert `List` to `Struct` dtypes.
 //!     - `list_eval` - Apply expressions over list elements.
 //!     - `cumulative_eval` - Apply expressions over cumulatively increasing windows.
+//!     - `argwhere` Get indices where condition holds.
+//!     - `date_offset` Add an offset to dates that take months and leap years into account.
+//!     - `trigonometry` Trigonometric functions.
 //! * `DataFrame` pretty printing
 //!     - `fmt` - Activate DataFrame formatting
 //!
@@ -293,6 +296,7 @@
 //! * `POLARS_FMT_NO_UTF8` -> use ascii tables in favor of utf8.
 //! * `POLARS_FMT_MAX_COLS` -> maximum number of columns shown when formatting DataFrames.
 //! * `POLARS_FMT_MAX_ROWS` -> maximum number of rows shown when formatting DataFrames.
+//! * `POLARS_FMT_STR_LEN` -> maximum number of characters printed per string value.
 //! * `POLARS_TABLE_WIDTH` -> width of the tables used during DataFrame formatting.
 //! * `POLARS_MAX_THREADS` -> maximum number of threads used to initialize thread pool (on startup).
 //! * `POLARS_VERBOSE` -> print logging info to stderr

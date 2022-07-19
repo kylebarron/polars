@@ -64,14 +64,20 @@ impl<T> Deref for SeriesWrap<ChunkedArray<T>> {
     }
 }
 
+impl<T: PolarsDataType + 'static> IntoSeries for ChunkedArray<T>
+where
+    SeriesWrap<ChunkedArray<T>>: SeriesTrait,
+{
+    fn into_series(self) -> Series
+    where
+        Self: Sized,
+    {
+        Series(Arc::new(SeriesWrap(self)))
+    }
+}
+
 macro_rules! impl_dyn_series {
     ($ca: ident) => {
-        impl IntoSeries for $ca {
-            fn into_series(self) -> Series {
-                Series(Arc::new(SeriesWrap(self)))
-            }
-        }
-
         impl private::PrivateSeries for SeriesWrap<$ca> {
             fn _field(&self) -> Cow<Field> {
                 Cow::Borrowed(self.0.ref_field())
@@ -95,21 +101,8 @@ macro_rules! impl_dyn_series {
                 self.0.cummin(reverse).into_series()
             }
 
-            fn _set_sorted(&mut self, reverse: bool) {
-                #[cfg(debug_assertions)]
-                {
-                    match (self.cont_slice(), self.is_empty()) {
-                        (Ok(vals), false) => {
-                            if reverse {
-                                assert!(vals[0] >= vals[vals.len() - 1])
-                            } else {
-                                assert!(vals[0] <= vals[vals.len() - 1])
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                self.0.set_sorted(reverse)
+            fn _set_sorted(&mut self, is_sorted: IsSorted) {
+                self.0.set_sorted2(is_sorted)
             }
 
             unsafe fn equal_element(
@@ -367,7 +360,7 @@ macro_rules! impl_dyn_series {
                 };
                 let mut out = ChunkTake::take_unchecked(&self.0, (&*idx).into());
                 if self.0.is_sorted() && (idx.is_sorted() || idx.is_sorted_reverse()) {
-                    out.set_sorted(idx.is_sorted_reverse())
+                    out.set_sorted2(idx.is_sorted2())
                 }
                 Ok(out.into_series())
             }
@@ -508,20 +501,6 @@ macro_rules! impl_dyn_series {
                 Arc::new(SeriesWrap(Clone::clone(&self.0)))
             }
 
-            fn pow(&self, exponent: f64) -> Result<Series> {
-                let f_err = || {
-                    Err(PolarsError::InvalidOperation(
-                        format!("power operation not supported on dtype {:?}", self.dtype()).into(),
-                    ))
-                };
-
-                match self.dtype() {
-                    DataType::Utf8 | DataType::List(_) | DataType::Boolean => f_err(),
-                    DataType::Float32 => Ok(self.0.pow_f32(exponent as f32).into_series()),
-                    _ => Ok(self.0.pow_f64(exponent).into_series()),
-                }
-            }
-
             fn peak_max(&self) -> BooleanChunked {
                 self.0.peak_max()
             }
@@ -579,36 +558,17 @@ impl_dyn_series!(Int16Chunked);
 impl_dyn_series!(Int32Chunked);
 impl_dyn_series!(Int64Chunked);
 
-macro_rules! impl_dyn_series_numeric {
-    ($ca: ident) => {
-        impl private::PrivateSeriesNumeric for SeriesWrap<$ca> {
-            fn bit_repr_is_large(&self) -> bool {
-                $ca::bit_repr_is_large()
-            }
-            fn bit_repr_large(&self) -> UInt64Chunked {
-                self.0.bit_repr_large()
-            }
-            fn bit_repr_small(&self) -> UInt32Chunked {
-                self.0.bit_repr_small()
-            }
-        }
-    };
+impl<T: PolarsNumericType> private::PrivateSeriesNumeric for SeriesWrap<ChunkedArray<T>> {
+    fn bit_repr_is_large(&self) -> bool {
+        ChunkedArray::<T>::bit_repr_is_large()
+    }
+    fn bit_repr_large(&self) -> UInt64Chunked {
+        self.0.bit_repr_large()
+    }
+    fn bit_repr_small(&self) -> UInt32Chunked {
+        self.0.bit_repr_small()
+    }
 }
-
-impl_dyn_series_numeric!(Float32Chunked);
-impl_dyn_series_numeric!(Float64Chunked);
-#[cfg(feature = "dtype-u8")]
-impl_dyn_series_numeric!(UInt8Chunked);
-#[cfg(feature = "dtype-u16")]
-impl_dyn_series_numeric!(UInt16Chunked);
-impl_dyn_series_numeric!(UInt32Chunked);
-impl_dyn_series_numeric!(UInt64Chunked);
-#[cfg(feature = "dtype-i8")]
-impl_dyn_series_numeric!(Int8Chunked);
-#[cfg(feature = "dtype-i16")]
-impl_dyn_series_numeric!(Int16Chunked);
-impl_dyn_series_numeric!(Int32Chunked);
-impl_dyn_series_numeric!(Int64Chunked);
 
 impl private::PrivateSeriesNumeric for SeriesWrap<Utf8Chunked> {}
 impl private::PrivateSeriesNumeric for SeriesWrap<ListChunked> {}

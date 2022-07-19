@@ -1,6 +1,6 @@
 [package]
 name = "py-polars"
-version = "0.13.46"
+version = "0.13.55"
 authors = ["ritchie46 <ritchie46@gmail.com>"]
 documentation = "https://pola-rs.github.io/polars/py-polars/html/reference/index.html"
 edition = "2021"
@@ -70,7 +70,8 @@ features = [
   "concat_str",
   "row_hash",
   "reinterpret",
-  # "decompress-fast",
+  # Use "decompress" instead of "decompress-fast" till zlib-ng is fixed.
+  # "decompress",
   "mode",
   # "extract_jsonpath",
   "lazy_regex",
@@ -105,6 +106,10 @@ features = [
   "list_to_struct",
   "to_dummies",
   "string_justify",
+  "arg_where",
+  "timezones",
+  "date_offset",
+  "trigonometry",
 ]
 
 [patch.crates-io]

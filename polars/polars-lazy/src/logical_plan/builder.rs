@@ -6,9 +6,9 @@ use parking_lot::Mutex;
 use polars_core::frame::explode::MeltArgs;
 use polars_core::prelude::*;
 use polars_core::utils::get_supertype;
-use polars_io::csv::CsvEncoding;
 #[cfg(feature = "csv-file")]
-use polars_io::csv_core::utils::infer_file_schema;
+use polars_io::csv::utils::infer_file_schema;
+use polars_io::csv::CsvEncoding;
 #[cfg(feature = "ipc")]
 use polars_io::ipc::IpcReader;
 #[cfg(feature = "parquet")]
@@ -16,8 +16,8 @@ use polars_io::parquet::ParquetReader;
 use polars_io::RowCount;
 #[cfg(feature = "csv-file")]
 use polars_io::{
+    csv::utils::{get_reader_bytes, is_compressed},
     csv::NullValues,
-    csv_core::utils::{get_reader_bytes, is_compressed},
 };
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -88,9 +88,10 @@ impl LogicalPlanBuilder {
         path: P,
         n_rows: Option<usize>,
         cache: bool,
-        parallel: bool,
+        parallel: polars_io::parquet::ParallelStrategy,
         row_count: Option<RowCount>,
         rechunk: bool,
+        low_memory: bool,
     ) -> Result<Self> {
         use polars_io::SerReader as _;
 
@@ -110,6 +111,8 @@ impl LogicalPlanBuilder {
                 parallel,
                 row_count,
                 rechunk,
+                file_counter: Default::default(),
+                low_memory,
             },
         }
         .into())
@@ -129,7 +132,7 @@ impl LogicalPlanBuilder {
             schema,
             predicate: None,
             aggregate: vec![],
-            options,
+            options: options.into(),
         }
         .into())
     }
@@ -207,6 +210,7 @@ impl LogicalPlanBuilder {
                 encoding,
                 row_count,
                 parse_dates,
+                file_counter: Default::default(),
             },
             predicate: None,
             aggregate: vec![],
@@ -395,6 +399,7 @@ impl LogicalPlanBuilder {
     }
 
     pub fn sort(self, by_column: Vec<Expr>, reverse: Vec<bool>, null_last: bool) -> Self {
+        let by_column = rewrite_projections(by_column, self.0.schema(), &[]);
         LogicalPlan::Sort {
             input: Box::new(self.0),
             by_column,

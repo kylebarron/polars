@@ -1,8 +1,8 @@
 use crate::prelude::*;
 use polars_core::prelude::*;
+use polars_io::csv::utils::get_reader_bytes;
+use polars_io::csv::utils::infer_file_schema;
 use polars_io::csv::{CsvEncoding, NullValues};
-use polars_io::csv_core::utils::get_reader_bytes;
-use polars_io::csv_core::utils::infer_file_schema;
 use polars_io::RowCount;
 
 #[derive(Clone)]
@@ -245,7 +245,7 @@ impl<'a> LazyCsvReader<'a> {
         )?
         .build()
         .into();
-        lf.opt_state.agg_scan_projection = true;
+        lf.opt_state.file_caching = true;
         Ok(lf)
     }
 

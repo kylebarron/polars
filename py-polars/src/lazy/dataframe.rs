@@ -4,7 +4,9 @@ use crate::dataframe::PyDataFrame;
 use crate::error::PyPolarsErr;
 use crate::file::get_file_like;
 use crate::lazy::{dsl::PyExpr, utils::py_exprs_to_exprs};
-use crate::prelude::{IdxSize, LogicalPlan, NullValues, ScanArgsIpc, ScanArgsParquet};
+use crate::prelude::{
+    IdxSize, LogicalPlan, NullValues, ParallelStrategy, ScanArgsIpc, ScanArgsParquet,
+};
 use polars::io::RowCount;
 use polars::lazy::frame::{AllowedOptimizations, LazyCsvReader, LazyFrame, LazyGroupBy};
 use polars::lazy::prelude::col;
@@ -222,17 +224,19 @@ impl PyLazyFrame {
         path: String,
         n_rows: Option<usize>,
         cache: bool,
-        parallel: bool,
+        parallel: Wrap<ParallelStrategy>,
         rechunk: bool,
         row_count: Option<(String, IdxSize)>,
+        low_memory: bool,
     ) -> PyResult<Self> {
         let row_count = row_count.map(|(name, offset)| RowCount { name, offset });
         let args = ScanArgsParquet {
             n_rows,
             cache,
-            parallel,
+            parallel: parallel.0,
             rechunk,
             row_count,
+            low_memory,
         };
         let lf = LazyFrame::scan_parquet(path, args).map_err(PyPolarsErr::from)?;
         Ok(lf.into())
@@ -323,10 +327,15 @@ impl PyLazyFrame {
         .into()
     }
 
-    pub fn sort_by_exprs(&self, by_column: Vec<PyExpr>, reverse: Vec<bool>) -> PyLazyFrame {
+    pub fn sort_by_exprs(
+        &self,
+        by_column: Vec<PyExpr>,
+        reverse: Vec<bool>,
+        nulls_last: bool,
+    ) -> PyLazyFrame {
         let ldf = self.ldf.clone();
         let exprs = py_exprs_to_exprs(by_column);
-        ldf.sort_by_exprs(exprs, reverse).into()
+        ldf.sort_by_exprs(exprs, reverse, nulls_last).into()
     }
     pub fn cache(&self) -> PyLazyFrame {
         let ldf = self.ldf.clone();
@@ -451,7 +460,7 @@ impl PyLazyFrame {
         let strategy = match strategy {
             "forward" => AsofStrategy::Forward,
             "backward" => AsofStrategy::Backward,
-            _ => panic!("expected on of {{'forward', 'backward'}}"),
+            _ => panic!("expected one of {{'forward', 'backward'}}"),
         };
 
         let ldf = self.ldf.clone();
@@ -652,9 +661,9 @@ impl PyLazyFrame {
             .into()
     }
 
-    pub fn slice(&self, offset: i64, len: IdxSize) -> Self {
+    pub fn slice(&self, offset: i64, len: Option<IdxSize>) -> Self {
         let ldf = self.ldf.clone();
-        ldf.slice(offset, len).into()
+        ldf.slice(offset, len.unwrap_or(IdxSize::MAX)).into()
     }
 
     pub fn tail(&self, n: IdxSize) -> Self {
