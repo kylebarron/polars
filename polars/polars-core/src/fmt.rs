@@ -309,6 +309,7 @@ fn prepare_row(row: Vec<Cow<'_, str>>, n_first: usize, n_last: usize) -> Vec<Str
 }
 
 impl Display for DataFrame {
+    // Remove
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         #[cfg(feature = "fmt")]
         {

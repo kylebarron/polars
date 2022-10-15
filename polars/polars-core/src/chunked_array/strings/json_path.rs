@@ -18,6 +18,7 @@ fn extract_json<'a>(expr: &PathCompiled, json_str: &'a str) -> Option<Cow<'a, st
     })
 }
 
+// remove
 impl Utf8Chunked {
     /// Extract json path, first match
     /// Refer to <https://goessner.net/articles/JsonPath/>

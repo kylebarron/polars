@@ -32,34 +32,29 @@ impl PySeries {
 // Init with numpy arrays
 macro_rules! init_method {
     ($name:ident, $type:ty) => {
-        #[pymethods]
-        impl PySeries {
-            #[staticmethod]
-            pub fn $name(
-                py: Python,
-                name: &str,
-                array: &PyArray1<$type>,
-                _strict: bool,
-            ) -> PySeries {
-                let array = array.readonly();
-                let vals = array.as_slice().unwrap();
-                py.allow_threads(|| PySeries {
-                    series: Series::new(name, vals),
-                })
-            }
+        #[staticmethod]
+        pub fn $name(py: Python, name: &str, array: &PyArray1<$type>, _strict: bool) -> PySeries {
+            let array = array.readonly();
+            let vals = array.as_slice().unwrap();
+            py.allow_threads(|| PySeries {
+                series: Series::new(name, vals),
+            })
         }
     };
 }
 
-init_method!(new_i8, i8);
-init_method!(new_i16, i16);
-init_method!(new_i32, i32);
-init_method!(new_i64, i64);
-init_method!(new_bool, bool);
-init_method!(new_u8, u8);
-init_method!(new_u16, u16);
-init_method!(new_u32, u32);
-init_method!(new_u64, u64);
+#[pymethods]
+impl PySeries {
+    init_method!(new_i8, i8);
+    init_method!(new_i16, i16);
+    init_method!(new_i32, i32);
+    init_method!(new_i64, i64);
+    init_method!(new_bool, bool);
+    init_method!(new_u8, u8);
+    init_method!(new_u16, u16);
+    init_method!(new_u32, u32);
+    init_method!(new_u64, u64);
+}
 
 #[pymethods]
 impl PySeries {
@@ -109,10 +104,7 @@ impl PySeries {
         let ca = self.series.struct_().map_err(PyPolarsErr::from)?;
         Ok(ca.fields().iter().map(|s| s.name()).collect())
     }
-}
 
-#[pymethods]
-impl PySeries {
     #[staticmethod]
     pub fn new_opt_bool(name: &str, obj: &PyAny, strict: bool) -> PyResult<PySeries> {
         let (seq, len) = get_pyseq(obj)?;
