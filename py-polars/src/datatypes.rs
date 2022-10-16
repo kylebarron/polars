@@ -28,6 +28,7 @@ pub(crate) enum PyDataType {
     Categorical,
     Struct,
     Binary,
+    FixedSizeList,
 }
 
 impl From<&DataType> for PyDataType {
@@ -48,6 +49,7 @@ impl From<&DataType> for PyDataType {
             DataType::Utf8 => Utf8,
             DataType::Binary => Binary,
             DataType::List(_) => List,
+            DataType::FixedSizeList(_) => FixedSizeList,
             DataType::Date => Date,
             DataType::Datetime(tu, tz) => Datetime(*tu, tz.clone()),
             DataType::Duration(tu) => Duration(*tu),
@@ -87,6 +89,7 @@ impl From<PyDataType> for DataType {
             PyDataType::Utf8 => Utf8,
             PyDataType::Binary => Binary,
             PyDataType::List => List(DataType::Null.into()),
+            PyDataType::FixedSizeList => FixedSizeList(DataType::Null.into()),
             PyDataType::Date => Date,
             PyDataType::Datetime(tu, tz) => Datetime(tu, tz),
             PyDataType::Duration(tu) => Duration(tu),

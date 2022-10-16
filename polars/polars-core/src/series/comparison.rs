@@ -49,6 +49,10 @@ macro_rules! impl_compare {
                 .unwrap()
                 .$method(rhs.duration().unwrap().deref()),
             DataType::List(_) => lhs.list().unwrap().$method(rhs.list().unwrap()),
+            DataType::FixedSizeList(_) => lhs
+                .fixedsizelist()
+                .unwrap()
+                .$method(rhs.fixedsizelist().unwrap()),
             #[cfg(feature = "dtype-struct")]
             DataType::Struct(_) => lhs
                 .struct_()

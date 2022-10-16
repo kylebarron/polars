@@ -264,19 +264,20 @@
 //! Note that if you get strange compile time errors, you probably need to opt-in for that `Series` dtype.
 //! The opt-in dtypes are:
 //!
-//! | data type               | feature flag      |
-//! |-------------------------|-------------------|
-//! | Date                    | dtype-date        |
-//! | Datetime                | dtype-datetime    |
-//! | Time                    | dtype-time        |
-//! | Duration                | dtype-duration    |
-//! | Int8                    | dtype-i8          |
-//! | Int16                   | dtype-i16         |
-//! | UInt8                   | dtype-u8          |
-//! | UInt16                  | dtype-u16         |
-//! | Categorical             | dtype-categorical |
-//! | Struct                  | dtype-struct      |
-//! | Binary                  | dtype-binary      |
+//! | data type               | feature flag        |
+//! |-------------------------|---------------------|
+//! | Date                    | dtype-date          |
+//! | Datetime                | dtype-datetime      |
+//! | Time                    | dtype-time          |
+//! | Duration                | dtype-duration      |
+//! | Int8                    | dtype-i8            |
+//! | Int16                   | dtype-i16           |
+//! | UInt8                   | dtype-u8            |
+//! | UInt16                  | dtype-u16           |
+//! | Categorical             | dtype-categorical   |
+//! | Struct                  | dtype-struct        |
+//! | Binary                  | dtype-binary        |
+//! | FixedSizeList           | dtype-fixedsizelist |
 //!
 //!
 //! Or you can choose on of the preconfigured pre-sets.
@@ -321,7 +322,7 @@
 //! ## Config with ENV vars
 //!
 //! * `POLARS_FMT_TABLE_FORMATTING` -> define styling of tables using any of the following options (default = UTF8_FULL):
-//!     
+//!
 //!                                    ASCII_FULL
 //!                                    ASCII_NO_BORDERS
 //!                                    ASCII_BORDERS_ONLY
@@ -333,7 +334,7 @@
 //!                                    UTF8_BORDERS_ONLY
 //!                                    UTF8_HORIZONTAL_ONLY
 //!                                    NOTHING
-//!                                     
+//!
 //!                                    These options are defined by comfy-table which provides examples for each at:
 //!                                    https://github.com/Nukesor/comfy-table/blob/main/src/style/presets.rs
 //! * `POLARS_FMT_TABLE_CELL_ALIGNMENT` -> define cell alignment using any of the following options (default = LEFT):

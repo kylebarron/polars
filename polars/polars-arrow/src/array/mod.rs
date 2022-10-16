@@ -1,4 +1,4 @@
-use arrow::array::{Array, BinaryArray, BooleanArray, ListArray, PrimitiveArray, Utf8Array};
+use arrow::array::{Array, BinaryArray, BooleanArray, ListArray, PrimitiveArray, Utf8Array, FixedSizeListArray};
 use arrow::bitmap::MutableBitmap;
 use arrow::datatypes::DataType;
 use arrow::types::NativeType;
@@ -31,6 +31,12 @@ impl ValueSize for Utf8Array<i64> {
 }
 
 impl ValueSize for BinaryArray<i64> {
+    fn get_values_size(&self) -> usize {
+        self.values().len()
+    }
+}
+
+impl ValueSize for FixedSizeListArray {
     fn get_values_size(&self) -> usize {
         self.values().len()
     }

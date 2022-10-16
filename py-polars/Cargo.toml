@@ -91,6 +91,7 @@ all = [
   "polars/groupby_list",
   "sql",
   "polars/dtype-binary",
+  "polars/dtype-fixedsizelist",
 ]
 
 # we cannot conditionaly activate simd

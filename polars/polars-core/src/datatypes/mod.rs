@@ -49,6 +49,9 @@ pub struct BinaryType {}
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ListType {}
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct FixedSizeListType {}
+
 pub trait PolarsDataType: Send + Sync {
     fn get_dtype() -> DataType
     where
@@ -106,8 +109,16 @@ impl PolarsDataType for BooleanType {
 
 impl PolarsDataType for ListType {
     fn get_dtype() -> DataType {
-        // null as we cannot no anything without self.
+        // null as we cannot know anything without self.
         DataType::List(Box::new(DataType::Null))
+    }
+}
+
+impl PolarsDataType for FixedSizeListType {
+    fn get_dtype() -> DataType {
+        // null as we cannot know anything without self.
+        // TODO: what default internal size?
+        DataType::FixedSizeList(Box::new(DataType::Null), 0)
     }
 }
 
@@ -136,6 +147,7 @@ impl PolarsSingleType for Utf8Type {}
 impl PolarsSingleType for BinaryType {}
 
 pub type ListChunked = ChunkedArray<ListType>;
+pub type FixedSizeListChunked = ChunkedArray<FixedSizeListType>;
 pub type BooleanChunked = ChunkedArray<BooleanType>;
 pub type UInt8Chunked = ChunkedArray<UInt8Type>;
 pub type UInt16Chunked = ChunkedArray<UInt16Type>;
@@ -298,6 +310,8 @@ pub enum AnyValue<'a> {
     Categorical(u32, &'a RevMapping),
     /// Nested type, contains arrays that are filled with one of the datetypes.
     List(Series),
+    /// Nested type of known length, contains arrays that are filled with one of the datetypes.
+    FixedSizeList(Series, usize),
     #[cfg(feature = "object")]
     /// Can be used to fmt and implements Any, so can be downcasted to the proper value type.
     Object(&'a dyn PolarsObjectSafe),
@@ -370,6 +384,7 @@ impl<'a> Deserialize<'a> for AnyValue<'static> {
             Float32,
             Float64,
             List,
+            FixedSizeList,
             Bool,
             Utf8Owned,
             #[cfg(feature = "dtype-binary")]
@@ -388,6 +403,7 @@ impl<'a> Deserialize<'a> for AnyValue<'static> {
             "Float32",
             "Float64",
             "List",
+            "FixedSizeList",
             "Boolean",
             "Utf8Owned",
             "BinaryOwned",
@@ -456,6 +472,7 @@ impl<'a> Deserialize<'a> for AnyValue<'static> {
                     b"Float32" => AvField::Float32,
                     b"Float64" => AvField::Float64,
                     b"List" => AvField::List,
+                    b"FixedSizeList" => AvField::FixedSizeList,
                     b"Bool" => AvField::Bool,
                     b"Utf8Owned" | b"Utf8" => AvField::Utf8Owned,
                     #[cfg(feature = "dtype-binary")]
@@ -543,6 +560,10 @@ impl<'a> Deserialize<'a> for AnyValue<'static> {
                         let value = variant.newtype_variant()?;
                         AnyValue::List(value)
                     }
+                    (AvField::FixedSizeList, variant) => {
+                        let value = variant.newtype_variant()?;
+                        AnyValue::FixedSizeList(value)
+                    }
                     (AvField::Utf8Owned, variant) => {
                         let value: String = variant.newtype_variant()?;
                         AnyValue::Utf8Owned(value.into())
@@ -588,6 +609,7 @@ impl<'a> AnyValue<'a> {
             #[cfg(feature = "dtype-categorical")]
             Categorical(_, _) => DataType::Categorical(None),
             List(s) => DataType::List(Box::new(s.dtype().clone())),
+            FixedSizeList(s, size) => DataType::FixedSizeList(Box::new(s.dtype().clone()), size),
             #[cfg(feature = "dtype-struct")]
             Struct(_, field) => DataType::Struct(field.to_vec()),
             #[cfg(feature = "dtype-binary")]
@@ -672,6 +694,7 @@ impl<'a> Hash for AnyValue<'a> {
             BinaryOwned(v) => state.write(v),
             Boolean(v) => state.write_u8(*v as u8),
             List(v) => Hash::hash(&Wrap(v.clone()), state),
+            FixedSizeList(v) => Hash::hash(&Wrap(v.clone()), state),
             _ => unimplemented!(),
         }
     }
@@ -829,6 +852,7 @@ impl<'a> AnyValue<'a> {
             #[cfg(feature = "dtype-time")]
             Time(v) => AnyValue::Time(v),
             List(v) => AnyValue::List(v),
+            FixedSizeList(v, size) => AnyValue::FixedSizeList(v, size),
             Utf8(v) => AnyValue::Utf8Owned(v.into()),
             Utf8Owned(v) => AnyValue::Utf8Owned(v),
             #[cfg(feature = "dtype-binary")]
@@ -881,6 +905,7 @@ impl PartialEq for AnyValue<'_> {
             (Datetime(l, tul, tzl), Datetime(r, tur, tzr)) => l == r && tul == tur && tzl == tzr,
             (Boolean(l), Boolean(r)) => l == r,
             (List(l), List(r)) => l == r,
+            (FixedSizeList(l), FixedSizeList(r)) => l == r,
             #[cfg(feature = "dtype-binary")]
             (Binary(l), Binary(r)) => l == r,
             (Utf8(l), Utf8(r)) => l == r,
@@ -1101,6 +1126,13 @@ mod test {
                     true,
                 ))),
                 DataType::List(DataType::Float64.into()),
+            ),
+            (
+                ArrowDataType::FixedSizeList(
+                    Box::new(ArrowField::new("item", ArrowDataType::Float64, true)),
+                    2,
+                ),
+                DataType::FixedSizeList(DataType::Float64.into(), 2),
             ),
             (
                 ArrowDataType::Dictionary(IntegerType::UInt32, ArrowDataType::Utf8.into(), false),

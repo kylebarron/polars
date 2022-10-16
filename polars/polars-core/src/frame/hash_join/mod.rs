@@ -237,6 +237,8 @@ impl_zip_outer_join!(BooleanChunked);
 impl_zip_outer_join!(Utf8Chunked);
 #[cfg(feature = "dtype-binary")]
 impl_zip_outer_join!(BinaryChunked);
+#[cfg(feature = "dtype-fixedsizelist")]
+impl_zip_outer_join!(FixedSizeListChunked);
 
 impl ZipOuterJoinColumn for Float32Chunked {
     fn zip_outer_join_column(

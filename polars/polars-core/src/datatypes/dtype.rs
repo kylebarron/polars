@@ -30,6 +30,9 @@ pub enum DataType {
     /// A 64-bit time representing the elapsed time since midnight in nanoseconds
     Time,
     List(Box<DataType>),
+    #[cfg(feature = "dtype-fixedsizelist")]
+    /// A list type with known length of each item
+    FixedSizeList(Box<DataType>, usize),
     #[cfg(feature = "object")]
     /// A generic type that can be used in a `Series`
     /// &'static str can be used to determine/set inner type
@@ -67,6 +70,10 @@ impl PartialEq for DataType {
                 (Categorical(_), Categorical(_)) => true,
                 (Datetime(tu_l, tz_l), Datetime(tu_r, tz_r)) => tu_l == tu_r && tz_l == tz_r,
                 (List(left_inner), List(right_inner)) => left_inner == right_inner,
+                #[cfg(feature = "dtype-fixedsizelist")]
+                (FixedSizeList(left_inner, left_size), FixedSizeList(right_inner, right_size)) => {
+                    left_inner == right_inner && left_size == right_size
+                }
                 #[cfg(feature = "dtype-duration")]
                 (Duration(tu_l), Duration(tu_r)) => tu_l == tu_r,
                 #[cfg(feature = "object")]
@@ -102,6 +109,8 @@ impl DataType {
 
     pub fn inner_dtype(&self) -> Option<&DataType> {
         if let DataType::List(inner) = self {
+            Some(inner)
+        } else if let DataType::FixedSizeList(inner, _) = self {
             Some(inner)
         } else {
             None
@@ -146,6 +155,8 @@ impl DataType {
             | DataType::Duration(_)
             | DataType::Boolean
             | DataType::Null => false,
+            #[cfg(feature = "dtype-fixedsizelist")]
+            DataType::FixedSizeList(_, _) => false,
             #[cfg(feature = "dtype-binary")]
             DataType::Binary => false,
             #[cfg(feature = "object")]
@@ -209,6 +220,11 @@ impl DataType {
                 dt.to_arrow(),
                 true,
             ))),
+            #[cfg(feature = "dtype-fixedsizelist")]
+            FixedSizeList(dt, size) => ArrowDataType::FixedSizeList(
+                Box::new(arrow::datatypes::Field::new("item", dt.to_arrow(), true)),
+                size,
+            ),
             Null => ArrowDataType::Null,
             #[cfg(feature = "object")]
             Object(_) => panic!("cannot convert object to arrow"),
@@ -264,6 +280,10 @@ impl Display for DataType {
             DataType::Duration(tu) => return write!(f, "duration[{}]", tu),
             DataType::Time => "time",
             DataType::List(tp) => return write!(f, "list[{}]", tp),
+            #[cfg(feature = "dtype-fixedsizelist")]
+            DataType::FixedSizeList(tp, size) => {
+                return write!(f, "fixedsizelist[{}, {}]", tp, size)
+            }
             #[cfg(feature = "object")]
             DataType::Object(s) => s,
             #[cfg(feature = "dtype-categorical")]
@@ -288,6 +308,14 @@ pub fn merge_dtypes(left: &DataType, right: &DataType) -> PolarsResult<DataType>
         (List(inner_l), List(inner_r)) => {
             let merged = merge_dtypes(inner_l, inner_r)?;
             Ok(DataType::List(Box::new(merged)))
+        }
+        (FixedSizeList(inner_l, size_l), FixedSizeList(inner_r, size_r)) => {
+            let merged = merge_dtypes(inner_l, inner_r)?;
+            Ok(DataType::FixedSizeList(
+                Box::new(merged),
+                // is this the right way to handle different-sized lists?
+                std::cmp::max(size_l, size_r),
+            ))
         }
         (left, right) if left == right => Ok(left.clone()),
         _ => Err(PolarsError::ComputeError(

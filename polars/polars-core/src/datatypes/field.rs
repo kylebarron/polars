@@ -127,6 +127,8 @@ impl From<&ArrowDataType> for DataType {
             ArrowDataType::Float64 => DataType::Float64,
             ArrowDataType::LargeList(f) => DataType::List(Box::new(f.data_type().into())),
             ArrowDataType::List(f) => DataType::List(Box::new(f.data_type().into())),
+            #[cfg(feature = "dtype-fixedsizelist")]
+            ArrowDataType::FixedSizeList(f, size) => DataType::FixedSizeList(Box::new(f.data_type().into()), size),
             ArrowDataType::Date32 => DataType::Date,
             ArrowDataType::Timestamp(tu, tz) => DataType::Datetime(tu.into(), tz.clone()),
             ArrowDataType::Duration(tu) => DataType::Duration(tu.into()),

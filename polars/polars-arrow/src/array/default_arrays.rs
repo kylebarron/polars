@@ -1,4 +1,6 @@
-use arrow::array::{BinaryArray, BooleanArray, PrimitiveArray, Utf8Array};
+use arrow::array::{
+    Array, BinaryArray, BooleanArray, FixedSizeListArray, PrimitiveArray, Utf8Array,
+};
 use arrow::bitmap::Bitmap;
 use arrow::buffer::Buffer;
 use arrow::datatypes::DataType;
@@ -43,7 +45,7 @@ impl FromDataUtf8 for Utf8Array<i64> {
 
 pub trait FromDataBinary {
     /// # Safety
-    /// `values` buffer must contain valid utf8 between every `offset`
+    /// `values` buffer must contain valid bytes between every `offset`
     unsafe fn from_data_unchecked_default(
         offsets: Buffer<i64>,
         values: Buffer<u8>,
@@ -58,5 +60,22 @@ impl FromDataBinary for BinaryArray<i64> {
         validity: Option<Bitmap>,
     ) -> Self {
         BinaryArray::from_data_unchecked(DataType::LargeBinary, offsets, values, validity)
+    }
+}
+
+pub trait FromDataFixedSizeList {
+    /// # Safety
+    /// `values` buffer must contain valid bytes between every `offset`
+    unsafe fn from_data_unchecked_default(values: Box<dyn Array>, validity: Option<Bitmap>)
+        -> Self;
+}
+
+impl FromDataFixedSizeList for FixedSizeListArray {
+    unsafe fn from_data_unchecked_default(
+        values: Box<dyn Array>,
+        validity: Option<Bitmap>,
+    ) -> Self {
+        // TODO: here need to fix construction of the data type
+        FixedSizeListArray::from_data(DataType::FixedSizeList((), ()), values, validity)
     }
 }

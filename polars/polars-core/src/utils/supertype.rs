@@ -257,6 +257,15 @@ pub fn get_supertype(l: &DataType, r: &DataType) -> Option<DataType> {
                 let st = get_supertype(inner, other)?;
                 Some(DataType::List(Box::new(st)))
             }
+            (FixedSizeList(inner_left), FixedSizeList(inner_right)) => {
+                let st = get_supertype(inner_left, inner_right)?;
+                Some(DataType::FixedSizeList(Box::new(st)))
+            }
+            // todo! check if can be removed
+            (FixedSizeList(inner), other) | (other, FixedSizeList(inner)) => {
+                let st = get_supertype(inner, other)?;
+                Some(DataType::FixedSizeList(Box::new(st)))
+            }
             (_, Unknown) => Some(Unknown),
             #[cfg(feature = "dtype-struct")]
             (Struct(fields_a), Struct(fields_b)) => {

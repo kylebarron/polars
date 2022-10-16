@@ -55,6 +55,8 @@ pub enum SerializableDataType {
     /// A 64-bit time representing elapsed time since midnight in the given TimeUnit.
     Time,
     List(Box<SerializableDataType>),
+    #[cfg(feature = "dtype-fixedsizelist")]
+    FixedSizeList(Box<SerializableDataType>, size),
     Null,
     #[cfg(feature = "dtype-struct")]
     Struct(Vec<Field>),
@@ -85,6 +87,8 @@ impl From<&DataType> for SerializableDataType {
             Duration(tu) => Self::Duration(*tu),
             Time => Self::Time,
             List(dt) => Self::List(Box::new(dt.as_ref().into())),
+            #[cfg(feature = "dtype-fixedsizelist")]
+            FixedSizeList(dt, size) => Self::FixedSizeList(Box::new(dt.as_ref().into()), size),
             Null => Self::Null,
             Unknown => Self::Unknown,
             #[cfg(feature = "dtype-struct")]
@@ -116,6 +120,8 @@ impl From<SerializableDataType> for DataType {
             Duration(tu) => Self::Duration(tu),
             Time => Self::Time,
             List(dt) => Self::List(Box::new((*dt).into())),
+            #[cfg(feature = "dtype-fixedsizelist")]
+            FixedSizeList(dt, size) => Self::FixedSizeList(Box::new((*dt).into()), size),
             Null => Self::Null,
             Unknown => Self::Unknown,
             #[cfg(feature = "dtype-struct")]

@@ -165,6 +165,7 @@ dtype-full = [
   "dtype-categorical",
   "dtype-struct",
   "dtype-binary",
+  "dtype-fixedsizelist",
 ]
 
 # sensible minimal set of opt-in datatypes
@@ -217,6 +218,12 @@ dtype-binary = [
   "polars-lazy/dtype-binary",
   "polars-ops/dtype-binary",
   "polars-io/dtype-binary",
+]
+dtype-fixedsizelist = [
+  # "polars-core/dtype-fixedsizelist",
+  # "polars-lazy/dtype-fixedsizelist",
+  # "polars-ops/dtype-fixedsizelist",
+  # "polars-io/dtype-fixedsizelist",
 ]
 
 docs-selection = [

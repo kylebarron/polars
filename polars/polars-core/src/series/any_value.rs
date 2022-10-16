@@ -63,6 +63,37 @@ fn any_values_to_list(avs: &[AnyValue], inner_type: &DataType) -> ListChunked {
     }
 }
 
+fn any_values_to_fixedsizelist(
+    avs: &[AnyValue],
+    inner_type: &DataType,
+    size: usize,
+) -> FixedSizeListChunked {
+    // this is handled downstream. The builder will choose the first non null type
+    if inner_type == &DataType::Null {
+        avs.iter()
+            .map(|av| match av {
+                AnyValue::FixedSizeList(b, size) => Some(b.clone()),
+                _ => None,
+            })
+            .collect_trusted()
+    }
+    // make sure that wrongly inferred anyvalues don't deviate from the datatype
+    else {
+        avs.iter()
+            .map(|av| match av {
+                AnyValue::FixedSizeList(b, size) => {
+                    if b.dtype() == inner_type {
+                        Some(b.clone())
+                    } else {
+                        Some(Series::full_null("", b.len(), inner_type))
+                    }
+                }
+                _ => None,
+            })
+            .collect_trusted()
+    }
+}
+
 impl<'a, T: AsRef<[AnyValue<'a>]>> NamedFrom<T, [AnyValue<'a>]> for Series {
     fn new(name: &str, v: T) -> Self {
         let av = v.as_ref();
@@ -112,6 +143,10 @@ impl Series {
                 .into_duration(*tu)
                 .into_series(),
             DataType::List(inner) => any_values_to_list(av, inner).into_series(),
+            #[cfg(feature = "dtype-fixedsizelist")]
+            DataType::FixedSizeList(inner, size) => {
+                any_values_to_fixedsizelist(av, inner, size).into_series()
+            }
             #[cfg(feature = "dtype-struct")]
             DataType::Struct(fields) => {
                 // the fields of the struct
@@ -181,6 +216,8 @@ impl<'a> From<&AnyValue<'a>> for DataType {
             #[cfg(feature = "dtype-time")]
             Time(_) => DataType::Time,
             List(s) => DataType::List(Box::new(s.dtype().clone())),
+            #[cfg(feature = "dtype-fixedsizelist")]
+            FixedSizeList(s, size) => DataType::FixedSizeList(Box::new(s.dtype().clone()), size),
             #[cfg(feature = "dtype-struct")]
             StructOwned(payload) => DataType::Struct(payload.1.to_vec()),
             #[cfg(feature = "dtype-struct")]

@@ -212,6 +212,46 @@ class List(DataType):
         return hash((List, self.inner))
 
 
+class FixedSizeList(DataType):
+    inner: PolarsDataType | None = None
+
+    def __init__(self, inner: PolarsDataType):
+        """
+        Nested list/array type.
+
+        Parameters
+        ----------
+        inner
+            The `DataType` of values within the fixed size list
+
+        """
+        self.inner = py_type_to_dtype(inner)
+
+    def __eq__(self, other: PolarsDataType) -> bool:  # type: ignore[override]
+        # The comparison allows comparing objects to classes
+        # and specific inner types to none specific.
+        # if one of the arguments is not specific about its inner type
+        # we infer it as being equal.
+        # FixedSizeList[i64] == FixedSizeList[i64] == True
+        # FixedSizeList[i64] == FixedSizeList == True
+        # FixedSizeList[i64] == FixedSizeList[None] == True
+        # FixedSizeList[i64] == FixedSizeList[f32] == False
+
+        # allow comparing object instances to class
+        if type(other) is type and issubclass(other, FixedSizeList):
+            return True
+        if isinstance(other, FixedSizeList):
+            if self.inner is None or other.inner is None:
+                return True
+            else:
+                return self.inner == other.inner
+        else:
+            return False
+
+    def __hash__(self) -> int:
+        return hash((FixedSizeList, self.inner))
+
+
 class Date(DataType):
     """Calendar date type."""
 
@@ -370,6 +410,7 @@ _DTYPE_TO_FFINAME: dict[PolarsDataType, str] = {
     Boolean: "bool",
     Utf8: "str",
     List: "list",
+    FixedSizeList: "fixedsizelist",
     Date: "date",
     Datetime: "datetime",
     Duration: "duration",
@@ -438,6 +479,7 @@ _DTYPE_TO_PY_TYPE: dict[PolarsDataType, type] = {
     Time: time,
     Binary: bytes,
     List: list,
+    FixedSizeList: list,
 }
 
 # Map Numpy char codes to polars dtypes.

@@ -94,6 +94,7 @@ dtype-u16 = []
 dtype-categorical = []
 dtype-struct = []
 dtype-binary = []
+dtype-fixedsizelist = []
 
 parquet = ["arrow/io_parquet"]
 
