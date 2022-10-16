@@ -42,6 +42,8 @@ impl_reverse!(Utf8Type, Utf8Chunked);
 #[cfg(feature = "dtype-binary")]
 impl_reverse!(BinaryType, BinaryChunked);
 impl_reverse!(ListType, ListChunked);
+#[cfg(feature = "dtype-fixedsizelist")]
+impl_reverse!(FixedSizeListType, FixedSizeListChunked);
 
 #[cfg(feature = "object")]
 impl<T: PolarsObject> ChunkReverse<ObjectType<T>> for ObjectChunked<T> {

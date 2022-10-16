@@ -168,6 +168,13 @@ impl Debug for ListChunked {
     }
 }
 
+#[cfg(feature = "dtype-fixedsizelist")]
+impl Debug for FixedSizeListChunked {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        format_array!(f, self, "fixedsizelist", self.name(), "ChunkedArray")
+    }
+}
+
 #[cfg(feature = "object")]
 impl<T> Debug for ObjectChunked<T>
 where
@@ -265,6 +272,10 @@ impl Debug for Series {
             }
             DataType::List(_) => {
                 format_array!(f, self.list().unwrap(), "list", self.name(), "Series")
+            }
+            #[cfg(feature = "dtype-fixedsizelist")]
+            DataType::FixedSizeList(_) => {
+                format_array!(f, self.fixedsizelist().unwrap(), "fixedsizelist", self.name(), "Series")
             }
             #[cfg(feature = "object")]
             DataType::Object(_) => format_object_array(f, self, self.name(), "Series"),
@@ -717,6 +728,8 @@ impl Display for AnyValue<'_> {
                 write!(f, "\"{}\"", s)
             }
             AnyValue::List(s) => write!(f, "{}", s.fmt_list()),
+            #[cfg(feature = "dtype-fixedsizelist")]
+            AnyValue::FixedSizeList(s, size) => write!(f, "{}", s.fmt_list()),
             #[cfg(feature = "object")]
             AnyValue::Object(v) => write!(f, "{}", v),
             #[cfg(feature = "dtype-struct")]
